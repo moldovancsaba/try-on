@@ -1,0 +1,30 @@
+# Models (Too large for standard Git)
+models/
+vendor/CatVTON/weights/
+
+# Environments
+.venv/
+.venv311/
+venv/
+
+# Python Cache
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# IDE & OS
+.DS_Store
+.vscode/
+.idea/
+
+# Large artifacts (Whitelisting demo samples)
+images/
+!images/our_first_tryon.png
+!images/test_theroad_girl.png
+!images/test_jersey.png
+*.png
+*.jpg
+*.jpeg
+*.webp
+gfpgan/weights/*.pth
