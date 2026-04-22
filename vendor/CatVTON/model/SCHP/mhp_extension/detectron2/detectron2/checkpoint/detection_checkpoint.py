@@ -26,7 +26,13 @@ class DetectionCheckpointer(Checkpointer):
     def _load_file(self, filename):
         if filename.endswith(".pkl"):
             with PathManager.open(filename, "rb") as f:
-                data = pickle.load(f, encoding="latin1")
+                import warnings
+                with warnings.catch_warnings():
+                    warnings.filterwarnings("ignore", message=".*align should be passed.*")
+                    warnings.filterwarnings("ignore", category=DeprecationWarning)
+                    if hasattr(warnings, "VisibleDeprecationWarning"):
+                         warnings.filterwarnings("ignore", category=warnings.VisibleDeprecationWarning)
+                    data = pickle.load(f, encoding="latin1")
             if "model" in data and "__author__" in data:
                 # file is in Detectron2 model zoo format
                 self.logger.info("Reading a file from '{}'".format(data["__author__"]))

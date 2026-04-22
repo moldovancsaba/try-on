@@ -57,11 +57,12 @@ class CatVTONPipeline:
             if not os.path.exists(vae_src):
                 vae_src = "stabilityai/sd-vae-ft-mse"
 
+        self.vae_dtype = torch.float32 if str(self.device).startswith("mps") else weight_dtype
         self.vae = AutoencoderKL.from_pretrained(
             vae_src, 
             local_files_only=local_files_only, 
             use_safetensors=use_safetensors
-        ).to(self.device, dtype=weight_dtype)
+        ).to(self.device, dtype=self.vae_dtype)
         self.unet = UNet2DConditionModel.from_pretrained(
             base_ckpt, 
             subfolder="unet", 
@@ -89,6 +90,32 @@ class CatVTONPipeline:
         if use_tf32 and torch.cuda.is_available():  # catvton-apple-patch-pipeline-tf32
             torch.set_float32_matmul_precision("high")
             torch.backends.cuda.matmul.allow_tf32 = True
+        
+        # FaceID State
+        self.faceid_proto = None
+        self.faceid_lora_loaded = False
+
+    def load_faceid_adapter(self, bin_path, lora_path):
+        """Surgically load the FaceID projector and LoRA weights."""
+        if not os.path.exists(bin_path):
+            return
+        
+        # Load Projector Weights (the translator)
+        state_dict = torch.load(bin_path, map_location="cpu")
+        # Extract the projection layer
+        self.faceid_proto = state_dict.get("image_proj", state_dict.get("proj", None))
+        if self.faceid_proto is not None:
+            self.faceid_proto = self.faceid_proto.to(self.device, dtype=self.weight_dtype)
+            print(f"[try-on] Identity Projector loaded from {os.path.basename(bin_path)}")
+        
+        # Load Likeness LoRA
+        if os.path.exists(lora_path) and not self.faceid_lora_loaded:
+             try:
+                 self.unet.load_lora_adapter(lora_path, adapter_name="faceid", prefix="lora_unet")
+                 self.faceid_lora_loaded = True
+                 print(f"[try-on] Likeness Booster (LoRA) active.")
+             except Exception as e:
+                 print(f"[warning] FaceID LoRA fail: {e}")
 
     def auto_attn_ckpt_load(self, attn_ckpt, version):
         sub_folder = {
@@ -146,6 +173,9 @@ class CatVTONPipeline:
         width: int = 768,
         generator=None,
         eta=1.0,
+        callback: torch.nn.Module = None,
+        callback_steps: int = 1,
+        faceid_embeds: torch.Tensor = None,
         **kwargs
     ):
         concat_dim = -2  # FIXME: y axis concat
@@ -156,9 +186,9 @@ class CatVTONPipeline:
         mask = prepare_mask_image(mask).to(self.device, dtype=self.weight_dtype)
         # Mask image
         masked_image = image * (mask < 0.5)
-        # VAE encoding
-        masked_latent = compute_vae_encodings(masked_image, self.vae)
-        condition_latent = compute_vae_encodings(condition_image, self.vae)
+        # VAE encoding (Force casting back to weight_dtype for UNet compatibility on MPS)
+        masked_latent = compute_vae_encodings(masked_image, self.vae).to(dtype=self.weight_dtype)
+        condition_latent = compute_vae_encodings(condition_image, self.vae).to(dtype=self.weight_dtype)
         mask_latent = torch.nn.functional.interpolate(mask, size=masked_latent.shape[-2:], mode="nearest")
         del image, mask, condition_image
         # Concatenate latents
@@ -184,6 +214,18 @@ class CatVTONPipeline:
                 ]
             )
             mask_latent_concat = torch.cat([mask_latent_concat] * 2)
+        
+        # 🎭 Identity Anchor: Project features into cross-attention space
+        encoder_hidden_states = None
+        if faceid_embeds is not None and self.faceid_proto is not None:
+            # FaceID Projection Handshake
+            faceid_embeds = faceid_embeds.to(self.device, dtype=self.weight_dtype)
+            # The projector expects [B, 512] -> [B, 4, 768] (or similar for SD15)
+            # Standard FaceID v1 projection logic:
+            encoder_hidden_states = self.faceid_proto(faceid_embeds)
+            encoder_hidden_states = encoder_hidden_states.view(-1, 4, 768) # Standard SD15 FaceID shape
+            if do_classifier_free_guidance:
+                encoder_hidden_states = torch.cat([torch.zeros_like(encoder_hidden_states), encoder_hidden_states])
 
         # Denoising loop
         extra_step_kwargs = self.prepare_extra_step_kwargs(generator, eta)
@@ -199,7 +241,7 @@ class CatVTONPipeline:
                 noise_pred= self.unet(
                     inpainting_latent_model_input,
                     t.to(self.device),
-                    encoder_hidden_states=None, # FIXME
+                    encoder_hidden_states=encoder_hidden_states,
                     return_dict=False,
                 )[0]
                 # perform guidance
@@ -212,6 +254,11 @@ class CatVTONPipeline:
                 latents = self.noise_scheduler.step(
                     noise_pred, t, latents, **extra_step_kwargs
                 ).prev_sample
+
+                # Live Studio Yield: Send the current state back for previewing
+                if i % callback_steps == 0:
+                    yield i, t, latents
+
                 # call the callback, if provided
                 if i == len(timesteps) - 1 or (
                     (i + 1) > num_warmup_steps
@@ -222,9 +269,10 @@ class CatVTONPipeline:
         # Decode the final latents
         latents = latents.split(latents.shape[concat_dim] // 2, dim=concat_dim)[0]
         latents = 1 / self.vae.config.scaling_factor * latents
-        image = self.vae.decode(latents.to(self.device, dtype=self.weight_dtype)).sample
+        # Decode: Cast back to vae_dtype (float32 on MPS) for high-fidelity color reconstruction
+        image = self.vae.decode(latents.to(self.device, dtype=self.vae_dtype)).sample
         image = (image / 2 + 0.5).clamp(0, 1)
         # we always cast to float32 as this does not cause significant overhead and is compatible with bfloat16
         image = image.cpu().permute(0, 2, 3, 1).float().numpy()
         image = numpy_to_pil(image)
-        return image
+        yield num_inference_steps, None, image

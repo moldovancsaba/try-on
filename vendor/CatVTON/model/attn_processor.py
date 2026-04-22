@@ -14,6 +14,13 @@ class SkipAttnProcessor(torch.nn.Module):
         attention_mask=None,
         temb=None,
     ):
+        # CatVTON Identity Anchor: If face features are provided, perform cross-attention.
+        # Otherwise, keep skipping to maintain garment focus.
+        if encoder_hidden_states is not None:
+             # Logic to handle the projection will be handled in the pipeline or here
+             # For a "Brutally Pragmatic" fix, we'll use a standard attention handshake
+             # if identity features are present.
+             return AttnProcessor2_0()(attn, hidden_states, encoder_hidden_states, attention_mask, temb)
         return hidden_states
 
 class AttnProcessor2_0(torch.nn.Module):
