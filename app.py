@@ -14,17 +14,27 @@ from typing import Any
 
 import gradio as gr
 
-# ── Apple Silicon Optimization ────────────────────────────────────────────────
+# ── Apple Silicon & Environment Optimization ──────────────────────────────────
 os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
+# Centralize HuggingFace Cache and enforce Absolute Offline Mode
+os.environ["HF_HOME"] = "/Users/Shared/Models/.cache/huggingface"
+os.environ["HF_HUB_OFFLINE"] = "1"
+os.environ["TRANSFORMERS_OFFLINE"] = "1"
+
+# Silence Verbose Engine Logs
+import logging
+logging.getLogger("insightface").setLevel(logging.WARNING)
+logging.getLogger("onnxruntime").setLevel(logging.ERROR)
 
 
 import torch
 import logging
 import warnings
 
-# Silence library noise internally
+# Silence higher-level library noise
 logging.getLogger("diffusers").setLevel(logging.ERROR)
 logging.getLogger("transformers").setLevel(logging.ERROR)
+logging.getLogger("torch.distributed.elastic.multiprocessing.redirects").setLevel(logging.ERROR)
 warnings.filterwarnings("ignore", category=UserWarning, module="torchvision")
 warnings.filterwarnings("ignore", category=UserWarning, module="torch.functional")
 
@@ -38,16 +48,17 @@ if not hasattr(torchvision.transforms, "functional_tensor"):
 _ROOT         = Path(__file__).resolve().parent
 _VENDOR_ROOT  = _ROOT / "vendor"
 _CATVTON_ROOT = _VENDOR_ROOT / "CatVTON"
-_MODELS_ROOT  = _ROOT / "models"
+_MODELS_ROOT  = Path("/Users/Shared/Models")
 
-# Internal sub-paths used by the package
+# Internal sub-paths used by the package (Redirected to Master Standard Vault)
 _D2_ROOT      = _CATVTON_ROOT / "model" / "SCHP" / "mhp_extension" / "detectron2"
 _DP_ROOT      = _D2_ROOT / "projects" / "DensePose"
-_MODELS_CAT   = _MODELS_ROOT / "catvton" / "zhengchong_CatVTON"
-_MODELS_SD    = _MODELS_ROOT / "sd-inpainting"
-_MODELS_VAE   = _MODELS_ROOT / "catvton" / "sd_vae_ft_mse"
-_LORA_LCM     = _MODELS_ROOT / "lcm_lora" / "pytorch_lora_weights.safetensors"
-_MODELS_UP    = _MODELS_ROOT / "upscalers"
+_MODELS_CAT   = _MODELS_ROOT / "processors" / "catvton-segmentation"
+_MODELS_SD    = _MODELS_ROOT / "checkpoints" / "sd15-inpainting"
+_MODELS_VAE   = _MODELS_ROOT / "vae" / "sd15-vae-ft-mse"
+_LORA_LCM     = _MODELS_ROOT / "loras" / "sd15-lcm" / "pytorch_lora_weights.safetensors"
+_MODELS_UP    = _MODELS_ROOT / "processors" / "upscalers"
+_MODELS_GF    = _MODELS_ROOT / "processors" / "face-restoration"
 
 # ── Bootstrap detectron2 / DensePose ──────────────────────────────────────────
 for _p in (_D2_ROOT, _DP_ROOT):
@@ -110,9 +121,11 @@ _LOCK    = threading.Lock()
 _PIPE    = None
 _MASKER  = None
 _ERROR   = None
-_CAT_PKG = None
 _UPSCALER = None
 _FACE_ENHANCER = None
+_FACE_APP = None # InsightFace Analysis
+_LOADED_VAE_TYPE = "hf" 
+_FACEID_LOADED = False
 _READY   = threading.Event()
 
 def _load_models():
@@ -143,6 +156,8 @@ def _load_models():
         # Enforce VAE path for absolute offline safety
         os.environ["SMF_CATVTON_VAE_PATH"] = str(_MODELS_VAE)
         
+        # Precision VAE Handshake: Use float32 for VAE on MPS to prevent color drift
+        # Even if the UNet is float16, the VAE is safer in float32 for color accuracy
         pipe = CatVTONPipeline(
             base_ckpt=str(_MODELS_SD),
             attn_ckpt=str(_MODELS_CAT),
@@ -182,12 +197,28 @@ def _load_models():
                         model = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=23, num_grow_ch=32, scale=4)
                         _UPSCALER = RealESRGANer(scale=4, model_path=str(model_path), model=model, tile=400, tile_pad=10, pre_pad=0, half=True, device=pipe_device)
                     
-                    face_path = _MODELS_UP / "GFPGANv1.3.pth"
+                    face_path = _MODELS_GF / "GFPGANv1.3.pth"
                     if face_path.exists():
                         _FACE_ENHANCER = GFPGANer(model_path=str(face_path), upscale=1, arch='clean', channel_multiplier=2, device=pipe_device)
             except Exception:
                 pass
             
+            # Initialize FaceID Mirror (InsightFace) with Absolute Silence
+            try:
+                import logging
+                import contextlib
+                import io
+                
+                # Squelch ALL engine output during handshake
+                with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                    from insightface.app import FaceAnalysis
+                    _FACE_APP = FaceAnalysis(name='antelopev2', root=str(_MODELS_ROOT / "analysis" / "insightface"), providers=['CPUExecutionProvider'])
+                    _FACE_APP.prepare(ctx_id=0, det_size=(640, 640))
+                
+                print("[try-on] Identity Mirror: ONLINE")
+            except Exception as e:
+                print(f"[warning] FaceID Mirror init fail: {e}")
+
         _READY.set()
         print(f"[try-on] \u2713 Ready | Backend: {pipe_device.upper()}")
         
@@ -197,17 +228,85 @@ def _load_models():
         _READY.set()
         print(f"[try-on] Load failed: {exc}")
 
-def _inference(person_img, cloth_img, category, resolution, num_steps, guidance, seed, show_mask, mask_blur, detail_boost, face_enhance, progress=gr.Progress()):
+def _inference(person_img, cloth_img, category, resolution, num_steps, guidance, seed, show_mask, mask_sharpness, mask_padding, detail_boost, face_restore_strength, preserve_head, lock_seed, use_vae_hf, use_faceid, faceid_strength, sampler_name, bg_plate, composite_strength, progress=gr.Progress()):
     import torch
+    import random
+    import json
     from PIL import Image
     from diffusers.image_processor import VaeImageProcessor
+    from diffusers import AutoencoderKL
+    from catvton.utils import numpy_to_pil
 
     if not _READY.is_set():
-        return None, None, "\u231b Models loading... please wait."
+        yield None, None, "⌛ Models loading... please wait.", gr.update(), gr.update()
+        return
     if _ERROR:
-        return None, None, f"\u274c Error: {_ERROR}"
+        yield None, None, f"❌ Error: {_ERROR}", gr.update(), gr.update()
+        return
     if person_img is None or cloth_img is None:
-        return None, None, "Please upload both images."
+        yield None, None, "Please upload both images.", gr.update(), gr.update()
+        return
+
+    # 💾 Save Last Settings
+    try:
+        settings = {
+            "category": category, "resolution": resolution, "steps": num_steps, "guidance": guidance,
+            "seed": seed, "show_mask": show_mask, "mask_sharpness": mask_sharpness, "mask_padding": mask_padding,
+            "detail_boost": detail_boost, "face_restore_strength": face_restore_strength, "preserve_head": preserve_head, 
+            "lock_seed": lock_seed, "use_vae_hf": use_vae_hf, "use_faceid": use_faceid, "faceid_strength": faceid_strength, 
+            "sampler_name": sampler_name, "composite_strength": composite_strength
+        }
+        with open(_MODELS_ROOT / "settings.json", "w") as f:
+            json.dump(settings, f)
+    except Exception as e:
+        print(f"[warning] Failed to save settings: {e}")
+
+    # 🎭 Neural VAE Hot-Swap & Identity State
+    global _LOADED_VAE_TYPE, _FACEID_LOADED
+    requested_vae = "hf" if use_vae_hf else "standard"
+    if _LOADED_VAE_TYPE != requested_vae:
+        progress(0, desc=f"Hot-swapping to {requested_vae} VAE...")
+        new_vae_path = str(_MODELS_VAE) if use_vae_hf else str(_MODELS_SD / "vae")
+        with _LOCK:
+            _PIPE.vae = AutoencoderKL.from_pretrained(
+                new_vae_path, 
+                local_files_only=True, 
+                use_safetensors=False
+            ).to(_PIPE.device, dtype=_PIPE.vae_dtype)
+            _LOADED_VAE_TYPE = requested_vae
+        print(f"[try-on] VAE Hot-Swapped to {requested_vae}")
+
+    # 🧬 Identity Anchor Handshake
+    faceid_embeds = None
+    if use_faceid and _FACE_APP:
+        if not _FACEID_LOADED:
+            progress(0, desc="Loading Identity Anchor weights...")
+            bin_path = str(_MODELS_ROOT / "adapters" / "ip-adapter-faceid-sd15" / "ip-adapter-faceid_sd15.bin")
+            lora_path = str(_MODELS_ROOT / "loras" / "sd15-faceid" / "ip-adapter-faceid_sd15_lora.safetensors")
+            with _LOCK:
+                _PIPE.load_faceid_adapter(bin_path, lora_path)
+                _FACEID_LOADED = True
+        
+        # Scan face from person image
+        import numpy as np
+        person_np = np.array(person_img)
+        # Convert RGB to BGR for InsightFace
+        face_info = _FACE_APP.get(person_np[:, :, ::-1])
+        if face_info:
+            # Take the largest face if multiple are found
+            face_info = sorted(face_info, key=lambda x: (x.bbox[2] - x.bbox[0]) * (x.bbox[3] - x.bbox[1]), reverse=True)[0]
+            faceid_embeds = torch.from_numpy(face_info.embedding).unsqueeze(0)
+            print(f"[try-on] Identity Anchor Extracted.")
+        else:
+            print(f"[warning] No face found in person photo for FaceID.")
+
+    # 🔒 Button Lockdown & Mining
+    actual_seed = int(seed)
+    if not lock_seed:
+        actual_seed = random.randint(0, 2147483647)
+        yield None, None, f"🎲 Mining Seed... {actual_seed}", gr.update(value=actual_seed), gr.update(interactive=False, value="⌛ Generating...")
+    else:
+        yield None, None, f"🚀 Launching...", gr.update(), gr.update(interactive=False, value="⌛ Generating...")
 
     # Preprocessing
     resize_and_crop = _CAT_PKG.resize_and_crop
@@ -223,15 +322,45 @@ def _inference(person_img, cloth_img, category, resolution, num_steps, guidance,
     person = resize_and_crop(person_img.convert("RGB"), target_size)
     cloth = resize_and_padding(cloth_img.convert("RGB"), target_size)
     
-    # 1. Masking
+    # Masking logic: Invert sharpness to blur (15 sharpness = 0 blur)
+    actual_blur = 15 - int(mask_sharpness)
     t_start = time.monotonic()
     progress(0, desc="Segmenting body...")
     mask_result = _MASKER(person, category)
     mask_pil = mask_result["mask"]
+
+    # --- Head Processing for Surgical Paste ---
+    import numpy as np
+    head_mask_pil = None
+    if preserve_head:
+        # Extract parsing maps
+        schp_lip = np.array(mask_result["schp_lip"])
+        schp_atr = np.array(mask_result["schp_atr"])
+        
+        # Face=13, Hair=2, Hat=1, Sunglasses=4 (LIP)
+        lip_head_map = [1, 2, 4, 13]
+        # Face=11, Hair=2, Hat=1, Sunglasses=3 (ATR)
+        atr_head_map = [1, 2, 3, 11]
+        
+        head_mask_np = np.zeros_like(schp_lip, dtype=bool)
+        for idx in lip_head_map:
+            head_mask_np |= (schp_lip == idx)
+        for idx in atr_head_map:
+            head_mask_np |= (schp_atr == idx)
+            
+        head_mask_pil = Image.fromarray((head_mask_np * 255).astype(np.uint8)).convert("L")
+    
+    # Advanced Mask Padding (Expand/Erode Silhouette)
+    from PIL import ImageFilter
+    if mask_padding > 0:
+        mask_pil = mask_pil.filter(ImageFilter.MaxFilter(size=int(mask_padding * 2 + 1)))
+    elif mask_padding < 0:
+        mask_pil = mask_pil.filter(ImageFilter.MinFilter(size=int(abs(mask_padding) * 2 + 1)))
+
     mask_pil = VaeImageProcessor(
         vae_scale_factor=8, do_normalize=False,
         do_binarize=True, do_convert_grayscale=True,
-    ).blur(mask_pil, blur_factor=int(mask_blur))
+    ).blur(mask_pil, blur_factor=actual_blur)
     t_mask = time.monotonic() - t_start
     
     # 2. Diffusion
@@ -243,19 +372,46 @@ def _inference(person_img, cloth_img, category, resolution, num_steps, guidance,
         torch.mps.empty_cache()
         torch.mps.synchronize()
         
-    gen = torch.Generator(device="mps").manual_seed(int(seed))
-    print(f"[try-on] Run: res={resolution}, steps={num_steps}, guidance={guidance}, category={category}")
+    gen = torch.Generator(device="mps").manual_seed(actual_seed)
+    print(f"[try-on] Run: res={resolution}, steps={num_steps}, guidance={guidance}, seed={actual_seed}")
     
-    # Speed Optimization: Switch Scheduler for low steps (Surgically Silenced)
-    from diffusers import LCMScheduler, EulerAncestralDiscreteScheduler
+    # Speed Optimization & Likeness Toggles (Dynamic LoRA Handling)
+    from diffusers import LCMScheduler, EulerAncestralDiscreteScheduler, DPMSolverMultistepScheduler, UniPCMultistepScheduler
+    
+    active_adapters = []
+    adapter_weights = []
+    
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         if int(num_steps) < 10:
             _PIPE.noise_scheduler = LCMScheduler.from_config(_PIPE.noise_scheduler.config)
-            actual_guidance = float(guidance)
+            # LCM Safety Clamp: guidance over 2.0 burns the image
+            actual_guidance = min(float(guidance), 2.0)
+            active_adapters.append("lcm")
+            adapter_weights.append(1.0)
         else:
-            _PIPE.noise_scheduler = EulerAncestralDiscreteScheduler.from_config(_PIPE.noise_scheduler.config)
+            if sampler_name == "DPM++ 2M":
+                _PIPE.noise_scheduler = DPMSolverMultistepScheduler.from_config(_PIPE.noise_scheduler.config)
+            elif sampler_name == "UniPC":
+                _PIPE.noise_scheduler = UniPCMultistepScheduler.from_config(_PIPE.noise_scheduler.config)
+            else:
+                _PIPE.noise_scheduler = EulerAncestralDiscreteScheduler.from_config(_PIPE.noise_scheduler.config)
             actual_guidance = float(guidance)
+            
+    if use_faceid and _FACEID_LOADED:
+        active_adapters.append("faceid")
+        adapter_weights.append(float(faceid_strength))
+        
+    try:
+        if hasattr(_PIPE.unet, "set_adapters"):
+            if len(active_adapters) > 0:
+                _PIPE.unet.set_adapters(active_adapters, adapter_weights)
+                _PIPE.unet.enable_adapters()
+            else:
+                _PIPE.unet.disable_adapters()
+    except Exception as e:
+        if "No adapter loaded" not in str(e):
+            print(f"[warning] Adapter setup failed: {e}")
 
     # Run pipeline
     t_diff_start = time.monotonic()
@@ -264,47 +420,141 @@ def _inference(person_img, cloth_img, category, resolution, num_steps, guidance,
     if hasattr(_PIPE, "enable_attention_slicing"):
         _PIPE.enable_attention_slicing()
 
+    result_img = None
     try:
-        result = _PIPE(
+        # 🎞️ Live Studio Loop
+        for i, t, latents in _PIPE(
             image=person, 
             condition_image=cloth, 
             mask=mask_pil,
             num_inference_steps=int(num_steps),
             guidance_scale=actual_guidance,
             generator=gen,
-        )
+            callback_steps=4,
+            faceid_embeds=faceid_embeds
+        ):
+            if latents is not None:
+                # Decode intermediate state for live preview
+                if isinstance(latents, torch.Tensor):
+                    # Fast decode for preview
+                    with torch.no_grad():
+                        l = 1 / _PIPE.vae.config.scaling_factor * latents
+                        # Take only the first latent in the concat (the person)
+                        l = l.split(l.shape[-2] // 2, dim=-2)[0]
+                        preview = _PIPE.vae.decode(l.to(_PIPE.device, dtype=_PIPE.vae_dtype)).sample
+                        preview = (preview / 2 + 0.5).clamp(0, 1)
+                        if _PIPE.device == "mps":
+                            preview = preview.float()
+                        preview = preview.cpu().permute(0, 2, 3, 1).numpy()
+                        preview_img = numpy_to_pil(preview)[0]
+                        yield preview_img, None, f"🎞️ Building... {int((i/int(num_steps))*100)}%", gr.update(), gr.update()
+            else:
+                # latents is None means i is num_steps and image is in the third slot
+                result_img = image 
+                pass
+
+        # Final yield from pipeline is (steps, None, image)
+        if result_img is None:
+            result_img = image
+        
     except Exception as e:
         print(f"[ERROR] Diffusion failed: {e}")
-        raise e
+        yield None, None, f"❌ Diffusion failed: {e}", gr.update(), gr.update()
+        return
 
     t_diff = time.monotonic() - t_diff_start
-    
-    result_img = result.images[0] if hasattr(result, "images") else result[0]
     
     # 3. High-Fidelity Finishing
     if resolution == "High Quality" and (detail_boost > 0 or face_enhance):
         import numpy as np
         progress(0.9, desc="Polishing result (Upscale & Restore)...")
-        img_np = np.array(result_img)
+        # Squeeze singleton dimensions (1, 1, H, W, C) -> (H, W, C) and cast to uint8
+        img_np = np.array(result_img).squeeze()
+        if img_np.dtype != np.uint8:
+            img_np = (img_np * 255).astype(np.uint8) if img_np.max() <= 1.0 else img_np.astype(np.uint8)
         
-        # Face Restoration
-        if face_enhance and _FACE_ENHANCER:
+        # Face Restoration with Fractional Blending
+        if face_restore_strength > 0 and _FACE_ENHANCER:
             _, _, restored_img = _FACE_ENHANCER.enhance(img_np, has_aligned=False, only_center_face=False, paste_back=True)
-            img_np = restored_img
+            if face_restore_strength < 1.0:
+                raw_img_pil = Image.fromarray(img_np)
+                restored_pil = Image.fromarray(restored_img)
+                blended_pil = Image.blend(raw_img_pil, restored_pil, alpha=face_restore_strength)
+                img_np = np.array(blended_pil)
+            else:
+                img_np = restored_img
             
-        # Optional Sharpening for patterns
+        # Optional Masked Sharpening for patterns
         if detail_boost > 0:
             from PIL import ImageFilter
-            result_img = Image.fromarray(img_np).filter(ImageFilter.UnsharpMask(radius=2, percent=int(detail_boost * 100), threshold=3))
+            sharpened_pil = Image.fromarray(img_np).filter(ImageFilter.UnsharpMask(radius=2, percent=int(detail_boost * 100), threshold=3))
+            
+            # Use the garment mask to isolate the sharpening to the cloth only
+            if mask_pil is not None:
+                garment_mask = mask_pil.copy().convert("L")
+                # Optional light blur to smooth the transition
+                garment_mask = garment_mask.filter(ImageFilter.GaussianBlur(radius=2))
+                
+                raw_img = Image.fromarray(img_np)
+                result_img = Image.composite(sharpened_pil, raw_img, garment_mask)
+            else:
+                result_img = sharpened_pil
+                
             img_np = np.array(result_img)
             
         result_img = Image.fromarray(img_np)
+    
+    # Ensure result_img is a single PIL Image, not a list
+    if isinstance(result_img, list):
+        result_img = result_img[0]
+
+    # 🏙️ Clean Plate Compositing (VFX Post-Process)
+    if bg_plate is not None and composite_strength > 0:
+        progress(0.95, desc="Compositing onto Clean Plate...")
+        from PIL import Image, ImageOps, ImageFilter
+        import numpy as np
+        
+        # 1. Prepare Background
+        if not isinstance(bg_plate, Image.Image):
+            bg_plate = Image.fromarray(bg_plate)
+        bg_plate = bg_plate.convert("RGB").resize(result_img.size, Image.LANCZOS)
+        
+        # 2. Extract Alpha from Body Mask
+        # mask_pil is the garment mask, but we need the person silhouette for a pure background restore
+        # If we only use garment mask, we only fix background around the garment. 
+        # For professional results, we blend the whole generation using the garment mask area.
+        person_alpha = mask_pil.copy().convert("L")
+        if composite_strength < 1.0:
+            # Scale the alpha by the user preference
+            person_alpha = person_alpha.point(lambda p: int(p * composite_strength))
+        
+        # Feather the edges to avoid "chopping"
+        person_alpha = person_alpha.filter(ImageFilter.GaussianBlur(radius=2))
+        
+        # 3. Composite (Generated result OVER original plate)
+        # Note: In our case, result_img is the AI generated image. we want to keep the AI person 
+        # but use the plate for the "blank" areas.
+        final_composite = Image.composite(result_img, bg_plate, person_alpha)
+        result_img = final_composite
 
     mask_out = mask_pil if show_mask else None
-    return result_img, mask_out, f"\u2705 Done! [Mask: {t_mask:.1f}s | Diff: {t_diff:.1f}s | Total: {t_mask+t_diff:.1f}s]"
+    yield result_img, mask_out, f"✓ Ready | Latency: {t_mask+t_diff:.1f}s", gr.update(), gr.update(interactive=True, value="Generate Try-On")
 
 # ── Gradio UI ─────────────────────────────────────────────────────────────────
+def load_settings():
+    import json
+    settings_file = _MODELS_ROOT / "settings.json"
+    if settings_file.exists():
+        try:
+            with open(settings_file, "r") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
 def build_ui():
+    s = load_settings()
+
     with gr.Blocks(title="Try-On Local") as demo:
         gr.Markdown("# Lightweight Local Virtual Try-On")
         
@@ -312,31 +562,54 @@ def build_ui():
             with gr.Column():
                 person_in = gr.Image(label="Person Photo", type="numpy")
                 cloth_in  = gr.Image(label="Garment Image", type="numpy")
-                category  = gr.Radio(["upper", "lower", "dresses"], value="upper", label="Category")
-                resolution = gr.Radio(["Fast (Draft)", "High Quality"], value="Fast (Draft)", label="Resolution")
-                
+                category  = gr.Radio(["upper", "lower", "dresses"], value=s.get("category", "upper"), label="Category")
+                resolution = gr.Radio(["Fast (Draft)", "High Quality"], value=s.get("resolution", "Fast (Draft)"), label="Resolution")
+                bg_plate = gr.Image(label="Background Plate (Optional)", type="numpy")
             with gr.Column():
+                with gr.Group():
+                    steps = gr.Slider(4, 50, value=s.get("steps", 20), step=1, label="Steps (Slide Right for Quality)")
+                    guidance = gr.Slider(1.0, 5.0, value=s.get("guidance", 3.5), step=0.1, label="Guidance (3.5 is Standard)")
+                    mask_sharpness = gr.Slider(0, 15, value=s.get("mask_sharpness", 12), step=1, label="Logo & Pattern Sharpness (Slide Right for Quality)")
+                    mask_padding = gr.Slider(-10, 30, value=s.get("mask_padding", 5), step=1, label="Mask Padding (Expand Silhouette)")
+                    detail_boost = gr.Slider(0.0, 1.0, value=s.get("detail_boost", 0.4), step=0.1, label="Logo/Pattern Detail Boost")
+                    composite_strength = gr.Slider(0.0, 1.0, value=s.get("composite_strength", 0.0), step=0.1, label="Clean Plate Blend (0 = OFF)")
+
+                    
                 with gr.Row():
-                    steps = gr.Slider(4, 50, value=6, step=1, label="Steps (4-8 for instant, 15+ for quality)")
-                    guidance = gr.Slider(1.0, 5.0, value=1.5, step=0.1, label="Guidance")
-                seed = gr.Number(value=42, label="Seed")
-                with gr.Accordion("Advanced High-Fidelity Settings", open=True):
-                    mask_blur = gr.Slider(0, 15, value=5, step=1, label="Mask Blending (Lower = Sharper Logos)")
-                    detail_boost = gr.Slider(0.0, 1.0, value=0.4, step=0.1, label="Logo/Pattern Detail Boost")
-                    face_enhance = gr.Checkbox(label="Face Restoration (GFPGAN)", value=True)
-                    show_mask = gr.Checkbox(label="Show Masking Step", value=False)
+                    seed = gr.Number(value=s.get("seed", 42), label="Seed", precision=0, scale=4, container=False)
+                    btn_42   = gr.Button("42", size="sm", min_width=60, scale=0)
+                    btn_1337 = gr.Button("1337", size="sm", min_width=60, scale=0)
+                    lock_seed = gr.Checkbox(label="🔒 Lock", value=s.get("lock_seed", False), scale=0, container=False)
+                
+                with gr.Accordion("Options", open=True):
+                    preserve_head = gr.Checkbox(label="Preserve Original Head ♥️ (Literal Pixel Paste)", value=s.get("preserve_head", True))
+                    use_faceid = gr.Checkbox(label="Face Identity Anchor (FaceID)", value=s.get("use_faceid", False))
+                    faceid_strength = gr.Slider(0.0, 1.0, value=s.get("faceid_strength", 0.6), step=0.1, label="Likeness Strength (FaceID)")
+                    use_vae_hf = gr.Checkbox(label="High-Fidelity VAE (ft-mse)", value=s.get("use_vae_hf", True))
+                    face_restore_strength = gr.Slider(0.0, 1.0, value=s.get("face_restore_strength", 1.0), step=0.1, label="Face Restore Blend (GFPGAN)")
+                    sampler = gr.Dropdown(["Euler A", "DPM++ 2M", "UniPC"], value=s.get("sampler_name", "Euler A"), label="High Quality Sampler")
+                    show_mask = gr.Checkbox(label="Show Masking Step (Debug)", value=s.get("show_mask", False))
 
                 run_btn = gr.Button("Generate Try-On", variant="primary")
+                status_out = gr.Textbox(label="Status", interactive=False, container=False)
                 
-                result_out = gr.Image(label="Result")
+                result_out = gr.Image(label="Result", interactive=False)
                 mask_out   = gr.Image(label="Mask", visible=False)
-                status_out = gr.Textbox(label="Status", interactive=False)
+
+        # 🎲 Seed Snap Logic
+        btn_42.click(fn=lambda: (42, True), outputs=[seed, lock_seed])
+        btn_1337.click(fn=lambda: (1337, True), outputs=[seed, lock_seed])
 
         show_mask.change(lambda v: gr.update(visible=v), show_mask, mask_out)
         run_btn.click(
             fn=_inference,
-            inputs=[person_in, cloth_in, category, resolution, steps, guidance, seed, show_mask, mask_blur, detail_boost, face_enhance],
-            outputs=[result_out, mask_out, status_out]
+            inputs=[
+                person_in, cloth_in, category, resolution, steps, guidance, seed, 
+                show_mask, mask_sharpness, mask_padding, detail_boost, face_restore_strength, preserve_head, lock_seed, use_vae_hf, use_faceid,
+                faceid_strength, sampler, bg_plate, composite_strength
+            ],
+            outputs=[result_out, mask_out, status_out, seed, run_btn],
+            show_progress="hidden"
         )
 
     return demo
