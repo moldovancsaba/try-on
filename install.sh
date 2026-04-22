@@ -20,11 +20,11 @@ pip install --upgrade pip
 pip install -r requirements.txt --quiet
 
 # 3. Neural Weight Audit
-echo "[try-on] Verifying neural weights..."
+echo "[try-on] Verifying global neural weights..."
 MISSING_WEIGHTS=0
 
 check_weight() {
-    if [ ! -f "$1" ]; then
+    if [ ! -f "$1" ] && [ ! -d "$1" ]; then
         echo "❌ MISSING: $1"
         MISSING_WEIGHTS=$((MISSING_WEIGHTS + 1))
     else
@@ -33,15 +33,15 @@ check_weight() {
 }
 
 # Core Models
-check_weight "models/sd-inpainting/model_index.json"
-check_weight "models/catvton/zhengchong_CatVTON/mix-48k-1024/attention/pytorch_lora_weights.safetensors"
+check_weight "/Users/Shared/Models/sd/v1-5-pruned-emaonly-inpainting"
+check_weight "/Users/Shared/Models/loras/lcm/pytorch_lora_weights.safetensors"
 
 # Enhancer Models
-check_weight "gfpgan/weights/detection_Resnet50_Final.pth"
-check_weight "gfpgan/weights/parsing_parsenet.pth"
+check_weight "/Users/Shared/Models/analysis/insightface/models/antelopev2"
+check_weight "/Users/Shared/Models/analysis/gfpgan/GFPGANv1.4.pth"
 
 if [ $MISSING_WEIGHTS -gt 0 ]; then
-    echo "⚠️  Some weights are missing. Please ensure all .pth files are placed in their respective folders."
+    echo "⚠️  Some weights are missing. Please ensure all required models are synced to /Users/Shared/Models/."
 else
     echo "🚀 installation Complete. You are ready to run ./run.sh"
 fi
