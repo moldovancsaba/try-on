@@ -326,15 +326,22 @@ def _inference(person_img, cloth_img, category, resolution, num_steps, guidance,
     actual_blur = 15 - int(mask_sharpness)
     t_start = time.monotonic()
     progress(0, desc="Segmenting body...")
-    mask_result = _MASKER(person, category)
+    
+    # AutoMasker uses 'overall' for dresses
+    automask_category = "overall" if category == "dresses" else category
+    mask_result = _MASKER(person, automask_category)
     mask_pil = mask_result["mask"]
 
-    # --- Head Processing for Surgical Paste ---
+    # --- Identity Map & Full Silhouette Extraction ---
     import numpy as np
+    schp_lip = np.array(mask_result["schp_lip"])
+    # 0 = Background in LIP mapping, everything else is the person
+    full_body_np = (schp_lip > 0)
+    full_body_mask_pil = Image.fromarray((full_body_np * 255).astype(np.uint8)).convert("L")
+    
+    # --- Head Processing for Surgical Paste ---
     head_mask_pil = None
     if preserve_head:
-        # Extract parsing maps
-        schp_lip = np.array(mask_result["schp_lip"])
         schp_atr = np.array(mask_result["schp_atr"])
         
         # Face=13, Hair=2, Hat=1, Sunglasses=4 (LIP)
@@ -391,7 +398,8 @@ def _inference(person_img, cloth_img, category, resolution, num_steps, guidance,
             adapter_weights.append(1.0)
         else:
             if sampler_name == "DPM++ 2M":
-                _PIPE.noise_scheduler = DPMSolverMultistepScheduler.from_config(_PIPE.noise_scheduler.config)
+                config = _PIPE.noise_scheduler.config
+                _PIPE.noise_scheduler = DPMSolverMultistepScheduler.from_config(config, use_karras_sigmas=True)
             elif sampler_name == "UniPC":
                 _PIPE.noise_scheduler = UniPCMultistepScheduler.from_config(_PIPE.noise_scheduler.config)
             else:
@@ -449,13 +457,13 @@ def _inference(person_img, cloth_img, category, resolution, num_steps, guidance,
                         preview_img = numpy_to_pil(preview)[0]
                         yield preview_img, None, f"🎞️ Building... {int((i/int(num_steps))*100)}%", gr.update(), gr.update()
             else:
-                # latents is None means i is num_steps and image is in the third slot
-                result_img = image 
+                # latents holds the final image when t is None (the third slot)
+                result_img = latents 
                 pass
 
         # Final yield from pipeline is (steps, None, image)
         if result_img is None:
-            result_img = image
+            result_img = latents
         
     except Exception as e:
         print(f"[ERROR] Diffusion failed: {e}")
@@ -465,13 +473,18 @@ def _inference(person_img, cloth_img, category, resolution, num_steps, guidance,
     t_diff = time.monotonic() - t_diff_start
     
     # 3. High-Fidelity Finishing
-    if resolution == "High Quality" and (detail_boost > 0 or face_enhance):
-        import numpy as np
+    import numpy as np
+    from PIL import ImageFilter
+    
+    # Always normalize result_img to a clean PIL Image
+    if isinstance(result_img, list):
+        result_img = result_img[0]
+    img_np = np.array(result_img).squeeze()
+    if img_np.dtype != np.uint8:
+        img_np = (img_np * 255).astype(np.uint8) if img_np.max() <= 1.0 else img_np.astype(np.uint8)
+    
+    if resolution == "High Quality":
         progress(0.9, desc="Polishing result (Upscale & Restore)...")
-        # Squeeze singleton dimensions (1, 1, H, W, C) -> (H, W, C) and cast to uint8
-        img_np = np.array(result_img).squeeze()
-        if img_np.dtype != np.uint8:
-            img_np = (img_np * 255).astype(np.uint8) if img_np.max() <= 1.0 else img_np.astype(np.uint8)
         
         # Face Restoration with Fractional Blending
         if face_restore_strength > 0 and _FACE_ENHANCER:
@@ -486,13 +499,11 @@ def _inference(person_img, cloth_img, category, resolution, num_steps, guidance,
             
         # Optional Masked Sharpening for patterns
         if detail_boost > 0:
-            from PIL import ImageFilter
             sharpened_pil = Image.fromarray(img_np).filter(ImageFilter.UnsharpMask(radius=2, percent=int(detail_boost * 100), threshold=3))
             
             # Use the garment mask to isolate the sharpening to the cloth only
             if mask_pil is not None:
                 garment_mask = mask_pil.copy().convert("L")
-                # Optional light blur to smooth the transition
                 garment_mask = garment_mask.filter(ImageFilter.GaussianBlur(radius=2))
                 
                 raw_img = Image.fromarray(img_np)
@@ -501,12 +512,16 @@ def _inference(person_img, cloth_img, category, resolution, num_steps, guidance,
                 result_img = sharpened_pil
                 
             img_np = np.array(result_img)
-            
-        result_img = Image.fromarray(img_np)
     
-    # Ensure result_img is a single PIL Image, not a list
-    if isinstance(result_img, list):
-        result_img = result_img[0]
+    result_img = Image.fromarray(img_np)
+    
+    # ❤️ Surgical Head Paste (100% Originality)
+    if preserve_head and head_mask_pil is not None:
+        progress(0.92, desc="Applying Surgical Head Paste...")
+        head_src = person.resize(result_img.size, Image.LANCZOS) if person.size != result_img.size else person
+        head_alpha = head_mask_pil.resize(result_img.size, Image.LANCZOS) if head_mask_pil.size != result_img.size else head_mask_pil
+        feathered_head = head_alpha.filter(ImageFilter.GaussianBlur(radius=3))
+        result_img = Image.composite(head_src, result_img, feathered_head)
 
     # 🏙️ Clean Plate Compositing (VFX Post-Process)
     if bg_plate is not None and composite_strength > 0:
@@ -519,21 +534,15 @@ def _inference(person_img, cloth_img, category, resolution, num_steps, guidance,
             bg_plate = Image.fromarray(bg_plate)
         bg_plate = bg_plate.convert("RGB").resize(result_img.size, Image.LANCZOS)
         
-        # 2. Extract Alpha from Body Mask
-        # mask_pil is the garment mask, but we need the person silhouette for a pure background restore
-        # If we only use garment mask, we only fix background around the garment. 
-        # For professional results, we blend the whole generation using the garment mask area.
-        person_alpha = mask_pil.copy().convert("L")
+        # 2. Extract Alpha from Body Mask (Full Silhouette, not Garment)
+        person_alpha = full_body_mask_pil.copy().resize(result_img.size, Image.LANCZOS)
         if composite_strength < 1.0:
-            # Scale the alpha by the user preference
             person_alpha = person_alpha.point(lambda p: int(p * composite_strength))
         
         # Feather the edges to avoid "chopping"
         person_alpha = person_alpha.filter(ImageFilter.GaussianBlur(radius=2))
         
         # 3. Composite (Generated result OVER original plate)
-        # Note: In our case, result_img is the AI generated image. we want to keep the AI person 
-        # but use the plate for the "blank" areas.
         final_composite = Image.composite(result_img, bg_plate, person_alpha)
         result_img = final_composite
 
@@ -599,6 +608,35 @@ def build_ui():
         # 🎲 Seed Snap Logic
         btn_42.click(fn=lambda: (42, True), outputs=[seed, lock_seed])
         btn_1337.click(fn=lambda: (1337, True), outputs=[seed, lock_seed])
+
+        # 🎛️ Auto-Preset: Snap sliders to optimal values per mode
+        def apply_preset(res):
+            if res == "Fast (Draft)":
+                return (
+                    gr.update(value=8),    # steps
+                    gr.update(value=1.5),  # guidance (safe LCM zone)
+                    gr.update(value=8),    # mask_sharpness
+                    gr.update(value=3),    # mask_padding (less aggressive at low res)
+                    gr.update(value=0.0),  # detail_boost (pointless at 384px)
+                    gr.update(value=0.0),  # face_restore_strength (skip on draft)
+                    gr.update(value=False), # preserve_head (resize kills quality)
+                )
+            else:  # High Quality
+                return (
+                    gr.update(value=30),   # steps
+                    gr.update(value=3.5),  # guidance (full Euler sweet spot)
+                    gr.update(value=12),   # mask_sharpness
+                    gr.update(value=5),    # mask_padding
+                    gr.update(value=0.4),  # detail_boost
+                    gr.update(value=0.6),  # face_restore_strength (natural blend)
+                    gr.update(value=True),  # preserve_head
+                )
+        
+        resolution.change(
+            fn=apply_preset,
+            inputs=[resolution],
+            outputs=[steps, guidance, mask_sharpness, mask_padding, detail_boost, face_restore_strength, preserve_head],
+        )
 
         show_mask.change(lambda v: gr.update(visible=v), show_mask, mask_out)
         run_btn.click(
