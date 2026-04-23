@@ -199,6 +199,8 @@ class AutoMasker:
         schp_lip_mask: Image.Image,
         schp_atr_mask: Image.Image,
         part: str='overall',
+        sleeve_length: str='default',
+        pant_length: str='default',
         **kwargs
     ):
         assert part in ['upper', 'lower', 'overall', 'inner', 'outer'], f"part should be one of ['upper', 'lower', 'overall', 'inner', 'outer'], but got {part}"
@@ -239,7 +241,18 @@ class AutoMasker:
         strong_mask_area = part_mask_of(MASK_CLOTH_PARTS[part], schp_lip_mask, LIP_MAPPING) | \
             part_mask_of(MASK_CLOTH_PARTS[part], schp_atr_mask, ATR_MAPPING)
         background_area = part_mask_of(['Background'], schp_lip_mask, LIP_MAPPING) & part_mask_of(['Background'], schp_atr_mask, ATR_MAPPING)
-        mask_dense_area = part_mask_of(MASK_DENSE_PARTS[part], densepose_mask, DENSE_INDEX_MAP)
+        
+        active_dense_parts = list(MASK_DENSE_PARTS[part])
+        if sleeve_length == 'sleeveless':
+            if 'big arms' in active_dense_parts: active_dense_parts.remove('big arms')
+            if 'forearms' in active_dense_parts: active_dense_parts.remove('forearms')
+        elif sleeve_length == 'short_sleeve':
+            if 'forearms' in active_dense_parts: active_dense_parts.remove('forearms')
+            
+        if pant_length == 'shorts':
+            if 'legs' in active_dense_parts: active_dense_parts.remove('legs')
+            
+        mask_dense_area = part_mask_of(active_dense_parts, densepose_mask, DENSE_INDEX_MAP)
         mask_dense_area = cv2.resize(mask_dense_area.astype(np.uint8), None, fx=0.25, fy=0.25, interpolation=cv2.INTER_NEAREST)
         mask_dense_area = cv2.dilate(mask_dense_area, dilate_kernel, iterations=2)
         mask_dense_area = cv2.resize(mask_dense_area.astype(np.uint8), None, fx=4, fy=4, interpolation=cv2.INTER_NEAREST)
@@ -247,8 +260,10 @@ class AutoMasker:
 
         mask_area = (np.ones_like(densepose_mask) & (~weak_protect_area) & (~background_area)) | mask_dense_area
 
-        mask_area = hull_mask(mask_area * 255) // 255  # Convex Hull to expand the mask area
-        mask_area = mask_area & (~weak_protect_area)
+        # Disable Convex Hull to prevent the AI from generating "Capes" in empty spaces
+        # mask_area = hull_mask(mask_area * 255) // 255  
+        
+        mask_area = cv2.dilate(mask_area.astype(np.uint8), dilate_kernel, iterations=1)
         mask_area = cv2.GaussianBlur(mask_area * 255, (kernal_size, kernal_size), 0)
         mask_area[mask_area < 25] = 0
         mask_area[mask_area >= 25] = 1
@@ -261,6 +276,8 @@ class AutoMasker:
         self,
         image: Union[str, Image.Image],
         mask_type: str = "upper",
+        sleeve_length: str = "default",
+        pant_length: str = "default",
     ):
         assert mask_type in ['upper', 'lower', 'overall', 'inner', 'outer'], f"mask_type should be one of ['upper', 'lower', 'overall', 'inner', 'outer'], but got {mask_type}"
         preprocess_results = self.preprocess_image(image)
@@ -269,6 +286,8 @@ class AutoMasker:
             preprocess_results['schp_lip'], 
             preprocess_results['schp_atr'], 
             part=mask_type,
+            sleeve_length=sleeve_length,
+            pant_length=pant_length,
         )
         return {
             'mask': mask,

@@ -228,7 +228,7 @@ def _load_models():
         _READY.set()
         print(f"[try-on] Load failed: {exc}")
 
-def _inference(person_img, cloth_img, category, resolution, num_steps, guidance, seed, show_mask, mask_sharpness, mask_padding, detail_boost, face_restore_strength, preserve_head, lock_seed, use_vae_hf, use_faceid, faceid_strength, sampler_name, bg_plate, composite_strength, progress=gr.Progress()):
+def _inference(person_img, cloth_img, category, sleeve_length, pant_length, resolution, num_steps, guidance, seed, show_mask, mask_sharpness, mask_padding, detail_boost, face_restore_strength, preserve_head, lock_seed, use_vae_hf, use_faceid, faceid_strength, sampler_name, bg_plate, composite_strength, enable_deep_texture, warp_strength, progress=gr.Progress()):
     import torch
     import random
     import json
@@ -250,11 +250,13 @@ def _inference(person_img, cloth_img, category, resolution, num_steps, guidance,
     # 💾 Save Last Settings
     try:
         settings = {
-            "category": category, "resolution": resolution, "steps": num_steps, "guidance": guidance,
+            "category": category, "sleeve_length": sleeve_length, "pant_length": pant_length,
+            "resolution": resolution, "steps": num_steps, "guidance": guidance,
             "seed": seed, "show_mask": show_mask, "mask_sharpness": mask_sharpness, "mask_padding": mask_padding,
             "detail_boost": detail_boost, "face_restore_strength": face_restore_strength, "preserve_head": preserve_head, 
             "lock_seed": lock_seed, "use_vae_hf": use_vae_hf, "use_faceid": use_faceid, "faceid_strength": faceid_strength, 
-            "sampler_name": sampler_name, "composite_strength": composite_strength
+            "sampler_name": sampler_name, "composite_strength": composite_strength,
+            "enable_deep_texture": enable_deep_texture, "warp_strength": warp_strength
         }
         with open(_MODELS_ROOT / "settings.json", "w") as f:
             json.dump(settings, f)
@@ -327,9 +329,15 @@ def _inference(person_img, cloth_img, category, resolution, num_steps, guidance,
     t_start = time.monotonic()
     progress(0, desc="Segmenting body...")
     
-    # AutoMasker uses 'overall' for dresses
-    automask_category = "overall" if category == "dresses" else category
-    mask_result = _MASKER(person, automask_category)
+    # AutoMasker Mapping
+    category_map = {
+        "Upper (T-Shirts, Hoodies)": "upper",
+        "Lower (Jeans, Shorts, Skirts)": "lower",
+        "Dresses (Full-Body, Suits, Rompers)": "overall",
+        "Outerwear (Jackets, Coats)": "outer"
+    }
+    automask_category = category_map.get(category, "upper")
+    mask_result = _MASKER(person, automask_category, sleeve_length=sleeve_length, pant_length=pant_length)
     mask_pil = mask_result["mask"]
 
     # --- Identity Map & Full Silhouette Extraction ---
@@ -515,6 +523,12 @@ def _inference(person_img, cloth_img, category, resolution, num_steps, guidance,
     
     result_img = Image.fromarray(img_np)
     
+    # 🌀 Deep Texture & Logo Restoration (TPS Warp)
+    if enable_deep_texture:
+        progress(0.91, desc="Warping Original Textures...")
+        from warp_repair import texture_repair_pass
+        result_img = texture_repair_pass(cloth_img, result_img, mask_pil, warp_strength=warp_strength)
+    
     # ❤️ Surgical Head Paste (100% Originality)
     if preserve_head and head_mask_pil is not None:
         progress(0.92, desc="Applying Surgical Head Paste...")
@@ -534,8 +548,15 @@ def _inference(person_img, cloth_img, category, resolution, num_steps, guidance,
             bg_plate = Image.fromarray(bg_plate)
         bg_plate = bg_plate.convert("RGB").resize(result_img.size, Image.LANCZOS)
         
-        # 2. Extract Alpha from Body Mask (Full Silhouette, not Garment)
-        person_alpha = full_body_mask_pil.copy().resize(result_img.size, Image.LANCZOS)
+        # 2. Extract New Alpha from Generated Body Mask
+        progress(0.96, desc="Extracting New Silhouette...")
+        gen_mask_result = _MASKER(result_img, automask_category, sleeve_length="default", pant_length="default") 
+        gen_schp_lip = np.array(gen_mask_result["schp_lip"])
+        
+        # 0 is background, >0 is person
+        new_silhouette_np = (gen_schp_lip > 0).astype(np.uint8) * 255
+        person_alpha = Image.fromarray(new_silhouette_np, mode="L")
+        
         if composite_strength < 1.0:
             person_alpha = person_alpha.point(lambda p: int(p * composite_strength))
         
@@ -571,7 +592,20 @@ def build_ui():
             with gr.Column():
                 person_in = gr.Image(label="Person Photo", type="numpy")
                 cloth_in  = gr.Image(label="Garment Image", type="numpy")
-                category  = gr.Radio(["upper", "lower", "dresses"], value=s.get("category", "upper"), label="Category")
+                # Handle legacy config values gracefully to prevent Gradio warnings
+                legacy_map = {"upper": "Upper (T-Shirts, Hoodies)", "lower": "Lower (Jeans, Shorts, Skirts)", "dresses": "Dresses (Full-Body, Suits, Rompers)", "outer": "Outerwear (Jackets, Coats)"}
+                saved_cat = s.get("category", "Upper (T-Shirts, Hoodies)")
+                saved_cat = legacy_map.get(saved_cat, saved_cat)
+                
+                category  = gr.Dropdown([
+                    "Upper (T-Shirts, Hoodies)", 
+                    "Lower (Jeans, Shorts, Skirts)", 
+                    "Dresses (Full-Body, Suits, Rompers)", 
+                    "Outerwear (Jackets, Coats)"
+                ], value=saved_cat, label="Garment Category")
+                with gr.Accordion("Garment Cut Constraints (Optional)", open=False):
+                    sleeve_length = gr.Radio(["default", "short_sleeve", "sleeveless"], value=s.get("sleeve_length", "default"), label="Sleeve Length Limit")
+                    pant_length = gr.Radio(["default", "shorts"], value=s.get("pant_length", "default"), label="Pant Length Limit")
                 resolution = gr.Radio(["Fast (Draft)", "High Quality"], value=s.get("resolution", "Fast (Draft)"), label="Resolution")
                 bg_plate = gr.Image(label="Background Plate (Optional)", type="numpy")
             with gr.Column():
@@ -597,6 +631,8 @@ def build_ui():
                     use_vae_hf = gr.Checkbox(label="High-Fidelity VAE (ft-mse)", value=s.get("use_vae_hf", True))
                     face_restore_strength = gr.Slider(0.0, 1.0, value=s.get("face_restore_strength", 1.0), step=0.1, label="Face Restore Blend (GFPGAN)")
                     sampler = gr.Dropdown(["Euler A", "DPM++ 2M", "UniPC"], value=s.get("sampler_name", "Euler A"), label="High Quality Sampler")
+                    enable_deep_texture = gr.Checkbox(label="Deep Logo & Texture Restoration (TPS Warp)", value=s.get("enable_deep_texture", False))
+                    warp_strength = gr.Slider(0.0, 1.0, value=s.get("warp_strength", 1.0), step=0.1, label="Texture Warp Blend Force")
                     show_mask = gr.Checkbox(label="Show Masking Step (Debug)", value=s.get("show_mask", False))
 
                 run_btn = gr.Button("Generate Try-On", variant="primary")
@@ -642,9 +678,9 @@ def build_ui():
         run_btn.click(
             fn=_inference,
             inputs=[
-                person_in, cloth_in, category, resolution, steps, guidance, seed, 
+                person_in, cloth_in, category, sleeve_length, pant_length, resolution, steps, guidance, seed, 
                 show_mask, mask_sharpness, mask_padding, detail_boost, face_restore_strength, preserve_head, lock_seed, use_vae_hf, use_faceid,
-                faceid_strength, sampler, bg_plate, composite_strength
+                faceid_strength, sampler, bg_plate, composite_strength, enable_deep_texture, warp_strength
             ],
             outputs=[result_out, mask_out, status_out, seed, run_btn],
             show_progress="hidden"
