@@ -22,3 +22,5 @@ yacs
 tabulate
 cloudpickle
 pycocotools
+huggingface_hub
+scikit-image

@@ -19,31 +19,31 @@ echo "[try-on] Syncing neural dependencies..."
 pip install --upgrade pip
 pip install -r requirements.txt --quiet
 
-# 3. Neural Weight Audit
-echo "[try-on] Verifying global neural weights..."
-MISSING_WEIGHTS=0
+# 3. Neural Weight Synchronization
+echo "[try-on] Synchronizing Centralized Neural Hub (/Users/Shared/Models/)..."
+MODELS_ROOT="/Users/Shared/Models"
+mkdir -p "$MODELS_ROOT"
 
-check_weight() {
-    if [ ! -f "$1" ] && [ ! -d "$1" ]; then
-        echo "❌ MISSING: $1"
-        MISSING_WEIGHTS=$((MISSING_WEIGHTS + 1))
-    else
-        echo "✅ FOUND: $1"
-    fi
-}
+echo ">> Downloading CatVTON Backend & Segmentation Models..."
+huggingface-cli download zhengchong/CatVTON --include "*DensePose*" "*SCHP*" --local-dir "$MODELS_ROOT/processors/catvton-segmentation"
 
-# Core Models
-check_weight "/Users/Shared/Models/sd/v1-5-pruned-emaonly-inpainting"
-check_weight "/Users/Shared/Models/loras/lcm/pytorch_lora_weights.safetensors"
+echo ">> Downloading LCM LoRA (Fast Drafting)..."
+huggingface-cli download latent-consistency/lcm-lora-sdv1-5 pytorch_lora_weights.safetensors --local-dir "$MODELS_ROOT/loras/sd15-lcm"
 
-# Enhancer Models
-check_weight "/Users/Shared/Models/analysis/insightface/models/antelopev2"
-check_weight "/Users/Shared/Models/analysis/gfpgan/GFPGANv1.4.pth"
+echo ">> Downloading Inpainting Base (Stable Diffusion v1.5)..."
+huggingface-cli download runwayml/stable-diffusion-inpainting --local-dir "$MODELS_ROOT/sd/v1-5-pruned-emaonly-inpainting"
 
-if [ $MISSING_WEIGHTS -gt 0 ]; then
-    echo "⚠️  Some weights are missing. Please ensure all required models are synced to /Users/Shared/Models/."
-else
-    echo "🚀 installation Complete. You are ready to run ./run.sh"
-fi
+echo ">> Downloading InsightFace Anchors (antelopev2)..."
+huggingface-cli download DIAMONIK7777/antelopev2 --local-dir "$MODELS_ROOT/analysis/insightface/models/antelopev2"
+
+echo ">> Downloading GFPGAN & RealESRGAN (VFX Post-Processing)..."
+mkdir -p "$MODELS_ROOT/processors/face-restoration"
+mkdir -p "$MODELS_ROOT/processors/upscalers"
+curl -L -s "https://github.com/TencentARC/GFPGAN/releases/download/v1.3.0/GFPGANv1.4.pth" -o "$MODELS_ROOT/processors/face-restoration/GFPGANv1.4.pth"
+curl -L -s "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth" -o "$MODELS_ROOT/processors/upscalers/RealESRGAN_x4plus.pth"
+
+echo "✅ All neural weights successfully synchronized to $MODELS_ROOT"
+
+echo "🚀 Installation Complete. You are ready to run ./run.sh"
 
 chmod +x run.sh
