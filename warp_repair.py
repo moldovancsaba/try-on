@@ -73,10 +73,25 @@ def texture_repair_pass(cloth_pil: Image.Image, result_pil: Image.Image, mask_pi
     dst_inliers = dst_pts[np.array(inliers_mask) == 1]
 
     if len(src_inliers) < 6:
-        print("[warning] TPS Warp failed: Not enough consistent geometry.")
-        return result_pil
-
-    print(f"[VFX] Anchored {len(src_inliers)} spatial geometry points on Torso.")
+        print("[warning] TPS Warp failed: Not enough consistent geometry. Engaging Bounding Box Fallback.")
+        # Fallback: Map the 4 corners of the Torso Mask to the 4 corners of the Result Mask
+        coords_cloth = cv2.findNonZero(torso_mask_cloth)
+        coords_res = cv2.findNonZero(mask_cv)
+        if coords_cloth is not None and coords_res is not None:
+            x1, y1, w1, h1 = cv2.boundingRect(coords_cloth)
+            x2, y2, w2, h2 = cv2.boundingRect(coords_res)
+            
+            src_inliers = np.float32([
+                [x1, y1], [x1+w1, y1], [x1+w1, y1+h1], [x1, y1+h1]
+            ])
+            dst_inliers = np.float32([
+                [x2, y2], [x2+w2, y2], [x2+w2, y2+h2], [x2, y2+h2]
+            ])
+            print("[VFX] Bounding Box Anchors established.")
+        else:
+            return result_pil
+    else:
+        print(f"[VFX] Anchored {len(src_inliers)} spatial geometry points on Torso.")
 
     # 3. Piecewise Affine Transform (TPS Approximation)
     tformer = PiecewiseAffineTransform()
