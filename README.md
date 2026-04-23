@@ -1,4 +1,4 @@
-# 🐈 CatVTON: Concatenation Is All You Need for Virtual Try-On with Diffusion Models
+# Try-On
 
 <div style="display: flex; justify-content: center; align-items: center;">
   <a href="http://arxiv.org/abs/2407.15886" style="margin: 0 2px;">
@@ -24,20 +24,6 @@
   </a>
 </div>
 
-
-
-**CatVTON** is a simple and efficient virtual try-on diffusion model with ***1) Lightweight Network (899.06M parameters totally)***, ***2) Parameter-Efficient Training (49.57M parameters trainable)*** and ***3) Simplified Inference (< 8G VRAM for 1024X768 resolution)***.
-<div align="center">
-  <img src="https://raw.githubusercontent.com/Zheng-Chong/CatVTON/main/resource/img/teaser.jpg" width="85%" height="100%"/>
-</div>
-
-
-
-
-
----
-
-# 🚀 Antigravity Live Studio v3.0 (Pro-Control Edition)
 **High-Fidelity | Identity Anchoring | Live Studio Previews | Scientific Spatial Constraints**
 
 We have significantly modified the original CatVTON engine, creating a production-grade evolution of the open-source Virtual Try-On paradigm. It solves the fundamental limitations of latent diffusion (hallucinations, cape artifacts, text destruction) by wrapping the core neural engine in a **Custom Mathematical Architecture**. 
@@ -59,7 +45,8 @@ You **must** modify the `_MODELS_ROOT` path in the source code to match your ope
 
 ---
 
-## 🚀 Quick Start
+## 🚀 How to Use (Quick Start)
+
 1. **Initialize Engine**: Run the installer to prepare your environment and verify neural weights. The script will automatically construct the Centralized Hub and use `huggingface-cli` to securely download the hundreds of megabytes of required weights directly into it.
    ```bash
    chmod +x install.sh run.sh
@@ -70,9 +57,39 @@ You **must** modify the `_MODELS_ROOT` path in the source code to match your ope
    ./run.sh
    ```
 
+### 📸 Our First Try-On
+<div align="center">
+  <img src="images/our_first_tryon.png" alt="First Try-On" width="600">
+</div>
+
+### 📸 Sample Gallery
+
+<div style="display: flex; justify-content: center; align-items: center; gap: 10px;">
+  <div align="center">
+    <b>Perfect Racing Suit Alignment</b><br>
+    <i>(TPS Warp + Cut Constraints)</i><br>
+    <img src="images/test_leather_suit.png" alt="Leather Racing Suit Try-On" width="400">
+  </div>
+  <div align="center">
+    <b>Everyday Wear</b><br>
+    <i>(Casual Try-On)</i><br>
+    <img src="images/test_theroad_girl.png" alt="Casual Try-On" width="400">
+  </div>
+</div>
+
+*The custom TPS Warp mathematically anchors logos to the generated body geometry, completely preserving them from Latent Diffusion destruction. The 'shorts' length constraint was engaged to perfectly map the pants.*
+
+**Original Assets for Testing:**
+* **Original Garment:** `images/garment_example.png`
+* **Original Person:** `images/person_example.png`
+
 ---
 
-## 💎 V3.0 Pro Features
+## 🛠️ How to Set (Advanced Operations)
+- **Fast Draft (8 Steps)**: Will execute instantly, but is restricted to testing physical clothing fit and proportion. (Ignore the harmless Diffusers console warnings).
+- **High Quality (30+ Steps)**: Triggers the `DPM++ 2M Karras` scheduler and unlocks deep texture unsharp masking and Surgical Head features.
+
+### 💎 V3.0 Pro Features
 - **Surgical Head Paste**: Extracts your exact face, hair, and sunglasses from the original photo and alpha-blends it pixel-perfectly onto the final AI generation. 100% molecular originality guaranteed.
 - **LCM Safety Circuit Break**: Mathematical engine interlock that perfectly bounds Guidance Scale under `2.0` when running Fast Drafts (LCM), making "deep-fried" crashes impossible.
 - **Auto-Preset Snap System**: Toggling between Fast Draft and High Quality instantly configures all 7 hidden sliders (Steps, Guidance, Padding, Blend, Sampler) to their mathematically optimal safe zones.
@@ -83,7 +100,7 @@ You **must** modify the `_MODELS_ROOT` path in the source code to match your ope
 
 ---
 
-## 🧬 Scientific Overview: How We Fixed Virtual Try-On
+## 🧬 Scientific Background: How We Fixed Virtual Try-On
 
 Standard zero-shot image-conditioned diffusion networks (like CatVTON or OOTDiffusion) suffer from massive mathematical flaws. This repository fixes them using post-process Computer Vision and Spatial Hacks.
 
@@ -103,20 +120,18 @@ Standard zero-shot image-conditioned diffusion networks (like CatVTON or OOTDiff
 3. It performs a High-Pass Frequency Separation, blending the sharp 4K graphics of the original image with the 3D lighting/shadows of the AI generation.
 
 ---
-
-## 📁 System Map
-- `app.py`: The single-file Live Studio engine and UI architecture.
-- `/Users/Shared/Models/`: Central neural vault for all isolated AI weights globally.
-- `vendor/`: Core localized dependencies for CatVTON and Detectron2 isolated from upstream pipeline regressions.
-
-## 🛠️ Advanced Operations
-- **Fast Draft (8 Steps)**: Will execute instantly, but is restricted to testing physical clothing fit and proportion. (Ignore the harmless Diffusers console warnings).
-- **High Quality (30+ Steps)**: Triggers the `DPM++ 2M Karras` scheduler and unlocks deep texture unsharp masking and Surgical Head features.
-
+*Architected and developed with 🛡️ by Antigravity*
 ---
-*Developed with 🛡️ by Antigravity*
 
----
+
+
+**CatVTON** is a simple and efficient virtual try-on diffusion model with ***1) Lightweight Network (899.06M parameters totally)***, ***2) Parameter-Efficient Training (49.57M parameters trainable)*** and ***3) Simplified Inference (< 8G VRAM for 1024X768 resolution)***.
+<div align="center">
+  <img src="https://raw.githubusercontent.com/Zheng-Chong/CatVTON/main/resource/img/teaser.jpg" width="85%" height="100%"/>
+</div>
+
+
+
 
 ## Updates
 - **`2024/08/10`**: Our 🤗 [**HuggingFace Space**](https://huggingface.co/spaces/zhengchong/CatVTON) is available now! Thanks for the grant from [**ZeroGPU**](https://huggingface.co/zero-gpu-explorers)！
@@ -257,21 +272,3 @@ All the materials, including code, checkpoints, and demo, are made available und
  url={https://arxiv.org/abs/2407.15886}, 
 }
 ```
-
-## 📸 Image Gallery & Examples
-
-### Perfect Racing Suit Alignment (TPS Warp + Cut Constraints)
-<div align="center">
-  <img src="images/test_leather_suit.png" alt="Leather Racing Suit Try-On" width="400">
-</div>
-
-*The custom TPS Warp mathematically anchors the Castrol and Honda logos to the generated body geometry, completely preserving them from Latent Diffusion destruction. The 'shorts' length constraint was engaged to perfectly map the pants.*
-
-### Everyday Wear
-<div align="center">
-  <img src="images/test_theroad_girl.png" alt="Casual Try-On" width="400">
-</div>
-
-### Original Assets
-* **Original Garment:** `images/garment_example.png`
-* **Original Person:** `images/person_example.png`
