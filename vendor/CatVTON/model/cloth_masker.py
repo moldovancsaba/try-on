@@ -249,9 +249,7 @@ class AutoMasker:
         elif sleeve_length == 'short_sleeve':
             if 'forearms' in active_dense_parts: active_dense_parts.remove('forearms')
             
-        if pant_length == 'shorts':
-            if 'legs' in active_dense_parts: active_dense_parts.remove('legs')
-            
+
         mask_dense_area = part_mask_of(active_dense_parts, densepose_mask, DENSE_INDEX_MAP)
         mask_dense_area = cv2.resize(mask_dense_area.astype(np.uint8), None, fx=0.25, fy=0.25, interpolation=cv2.INTER_NEAREST)
         mask_dense_area = cv2.dilate(mask_dense_area, dilate_kernel, iterations=2)
