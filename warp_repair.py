@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 from PIL import Image, ImageFilter
-from skimage.transform import PiecewiseAffineTransform, warp
+from skimage.transform import PiecewiseAffineTransform, ProjectiveTransform, warp
 
 def texture_repair_pass(cloth_pil: Image.Image, result_pil: Image.Image, mask_pil: Image.Image, warp_strength: float = 1.0) -> Image.Image:
     """
@@ -93,8 +93,11 @@ def texture_repair_pass(cloth_pil: Image.Image, result_pil: Image.Image, mask_pi
     else:
         print(f"[VFX] Anchored {len(src_inliers)} spatial geometry points on Torso.")
 
-    # 3. Piecewise Affine Transform (TPS Approximation)
-    tformer = PiecewiseAffineTransform()
+    # 3. Transform Setup (Projective for 4 points to avoid triangle artifacts, Piecewise for SIFT mesh)
+    if len(src_inliers) == 4:
+        tformer = ProjectiveTransform()
+    else:
+        tformer = PiecewiseAffineTransform()
     # We map dst -> src for inverse warping used by skimage.warp
     try:
         tformer.estimate(dst_inliers, src_inliers)
