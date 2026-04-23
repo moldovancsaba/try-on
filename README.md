@@ -28,7 +28,7 @@
 
 **CatVTON** is a simple and efficient virtual try-on diffusion model with ***1) Lightweight Network (899.06M parameters totally)***, ***2) Parameter-Efficient Training (49.57M parameters trainable)*** and ***3) Simplified Inference (< 8G VRAM for 1024X768 resolution)***.
 <div align="center">
-  <img src="resource/img/teaser.jpg" width="85%" height="100%"/>
+  <img src="https://raw.githubusercontent.com/Zheng-Chong/CatVTON/main/resource/img/teaser.jpg" width="85%" height="100%"/>
 </div>
 
 
@@ -148,11 +148,11 @@ To deploy CatVTON to your ComfyUI, follow these steps:
 When you run the CatVTON workflow for the first time, the weight files will be automatically downloaded, usually taking dozens of minutes.
 
 <div align="center">
-  <img src="resource/img/comfyui-1.png" width="100%" height="100%"/>
+  <img src="https://raw.githubusercontent.com/Zheng-Chong/CatVTON/main/resource/img/comfyui-1.png" width="100%" height="100%"/>
 </div>
 
 <!-- <div align="center">
- <img src="resource/img/comfyui.png" width="100%" height="100%"/>
+ <img src="https://raw.githubusercontent.com/Zheng-Chong/CatVTON/main/resource/img/comfyui.png" width="100%" height="100%"/>
 </div> -->
 
 ### Gradio App
