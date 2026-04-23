@@ -79,3 +79,23 @@ Standard zero-shot image-conditioned diffusion networks (like CatVTON or OOTDiff
 
 ---
 *Developed with 🛡️ by Antigravity*
+
+
+
+## 📸 Image Gallery & Examples
+
+### Perfect Racing Suit Alignment (TPS Warp + Cut Constraints)
+<div align="center">
+  <img src="images/test_leather_suit.png" alt="Leather Racing Suit Try-On" width="400">
+</div>
+
+*The custom TPS Warp mathematically anchors the Castrol and Honda logos to the generated body geometry, completely preserving them from Latent Diffusion destruction. The 'shorts' length constraint was engaged to perfectly map the pants.*
+
+### Everyday Wear
+<div align="center">
+  <img src="images/test_theroad_girl.png" alt="Casual Try-On" width="400">
+</div>
+
+### Original Assets
+* **Original Garment:** `images/garment_example.png`
+* **Original Person:** `images/person_example.png`
