@@ -20,8 +20,8 @@ def texture_repair_pass(cloth_pil: Image.Image, result_pil: Image.Image, mask_pi
     gray_cloth = cv2.cvtColor(cloth_np, cv2.COLOR_RGB2GRAY)
     gray_result = cv2.cvtColor(result_np, cv2.COLOR_RGB2GRAY)
 
-    # 2. ORB Feature Matching with Spatial Isolation (Torso Only)
-    orb = cv2.ORB_create(nfeatures=2000, fastThreshold=10)
+    # 2. SIFT Feature Matching with Spatial Isolation (Torso Only)
+    sift = cv2.SIFT_create(nfeatures=5000)
     
     # Create a Torso Mask for the flat cloth (Middle 60% Width, 20%-80% Height)
     ch, cw = gray_cloth.shape
@@ -29,7 +29,7 @@ def texture_repair_pass(cloth_pil: Image.Image, result_pil: Image.Image, mask_pi
     torso_mask_cloth[int(ch*0.15):int(ch*0.85), int(cw*0.25):int(cw*0.75)] = 255
     
     # Find keypoints ONLY on the torso of the clothing
-    kp_cloth, des_cloth = orb.detectAndCompute(gray_cloth, torso_mask_cloth)
+    kp_cloth, des_cloth = sift.detectAndCompute(gray_cloth, torso_mask_cloth)
     
     # Mask the result image so we only search for matching points inside the generated garment
     mask_np = np.array(mask_pil.convert("L"))
@@ -38,14 +38,14 @@ def texture_repair_pass(cloth_pil: Image.Image, result_pil: Image.Image, mask_pi
     else:
         mask_cv = mask_np
         
-    kp_res, des_res = orb.detectAndCompute(gray_result, mask_cv)
+    kp_res, des_res = sift.detectAndCompute(gray_result, mask_cv)
 
     if des_cloth is None or des_res is None or len(kp_cloth) < 10 or len(kp_res) < 10:
         print("[warning] TPS Warp failed: Insufficient feature matches for complex alignment.")
         return result_pil
 
-    # Brute Force Matcher with Hamming distance
-    bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
+    # Brute Force Matcher with L2 distance for SIFT
+    bf = cv2.BFMatcher(cv2.NORM_L2, crossCheck=True)
     matches = bf.match(des_cloth, des_res)
     # Sort them in the order of their distance (best matches first)
     matches = sorted(matches, key=lambda x: x.distance)
@@ -104,10 +104,7 @@ def texture_repair_pass(cloth_pil: Image.Image, result_pil: Image.Image, mask_pi
     
     high_freq = warped_f - blur_warp_f  # Extract edges/details
     
-    # Supress Halos: Identify pure white background in the warped image
-    # (Because pure white background against dark suit creates massive artificial edges)
-    white_mask = np.all(warped_f > 240, axis=2)
-    high_freq[white_mask] = 0.0  # Erase the white halos completely
+    # Background suppression is safely handled by the final feathered_mask composite.
     
     # Low frequency of the AI Result (Lighting / Shadows)
     result_f = np.array(result_pil).astype(float)
