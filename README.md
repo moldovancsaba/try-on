@@ -24,24 +24,26 @@
   </a>
 </div>
 
-**High-Fidelity | Identity Anchoring | Live Studio Previews | Scientific Spatial Constraints**
+**Standalone Offline App | High-Quality Rendering | Live Studio Tools | Scientific Spatial Constraints**
 
-We have significantly modified the original CatVTON engine, creating a production-grade evolution of the open-source Virtual Try-On paradigm. It solves the fundamental limitations of latent diffusion (hallucinations, cape artifacts, text destruction) by wrapping the core neural engine in a **Custom Mathematical Architecture**. 
+This repository ships a standalone offline virtual try-on app built on top of CatVTON. The current supported delivery is the stable high-quality rendering path plus the local garment studio and package export tooling.
 
-Engineered specifically for Apple Silicon (MPS), the engine is mathematically stabilized with dynamic safety clamps to prevent crashes, alongside an entirely new suite of post-processing VFX tools for exact visual preservation.
+The runtime is optimized first for Apple Silicon (`mps`) and can also select `cuda` or `cpu` automatically when available. Offline dependencies are downloaded by the installer into a centralized model hub so a fresh machine can be provisioned without manual checkpoint hunting.
 
 ## 🏛️ The Centralized Neural Hub Architecture
 
 To prevent duplicate 10GB+ neural network downloads across different AI projects, **this repository enforces a Centralized Neural Hub**.
 
-By default, the engine requires all AI models to live at a specific absolute path on your machine:
+By default, the engine stores all AI models under:
 📁 **`/Users/Shared/Models/`**
 
-### ⚠️ If you are on Windows or Linux:
-You **must** modify the `_MODELS_ROOT` path in the source code to match your operating system, or use a UNIX-like path mapping.
-1. Open `app.py`.
-2. Locate Line 51: `_MODELS_ROOT = Path("/Users/Shared/Models")`
-3. Change this to your preferred universal model directory (e.g., `C:/Shared/Models` or `/home/user/Models`).
+You can override that location on a new machine without editing source code:
+
+```bash
+export TRYON_MODELS_ROOT=/your/shared/models/path
+```
+
+The installer and runtime both honor `TRYON_MODELS_ROOT`.
 
 ---
 
@@ -56,6 +58,10 @@ You **must** modify the `_MODELS_ROOT` path in the source code to match your ope
    ```bash
    ./run.sh
    ```
+3. **Open the app**:
+   - `http://127.0.0.1:7860/try-on/` for the standalone try-on UI
+   - `http://127.0.0.1:7860/set-garment` for garment package setup
+   - `http://127.0.0.1:7860/garments` for the local garment library
 
 ### 📸 Our First Try-On
 <div align="center">
@@ -85,14 +91,15 @@ You **must** modify the `_MODELS_ROOT` path in the source code to match your ope
 
 ---
 
-## 🛠️ How to Set (Advanced Operations)
-- **Fast Draft (8 Steps)**: Will execute instantly, but is restricted to testing physical clothing fit and proportion. (Ignore the harmless Diffusers console warnings).
-- **High Quality (30+ Steps)**: Triggers the `DPM++ 2M Karras` scheduler and unlocks deep texture unsharp masking and Surgical Head features.
+## 🛠️ Standalone Build Status
+- **Supported mode**: `High Quality` rendering is the shipped standalone path.
+- **Removed mode**: `Fast Draft` / LCM LoRA is intentionally not part of the standalone build because it was not reliable enough for installable offline delivery.
+- **Offline install contract**: `install.sh` downloads the runtime dependencies the app actually expects, including SD inpainting, VAE, segmentation assets, and GFPGAN weights.
+- **Studio package tooling**: `/set-garment` exports package metadata and garment assets locally for future production wiring.
 
 ### 💎 V3.0 Pro Features
 - **Surgical Head Paste**: Extracts your exact face, hair, and sunglasses from the original photo and alpha-blends it pixel-perfectly onto the final AI generation. 100% molecular originality guaranteed.
-- **LCM Safety Circuit Break**: Mathematical engine interlock that perfectly bounds Guidance Scale under `2.0` when running Fast Drafts (LCM), making "deep-fried" crashes impossible.
-- **Auto-Preset Snap System**: Toggling between Fast Draft and High Quality instantly configures all 7 hidden sliders (Steps, Guidance, Padding, Blend, Sampler) to their mathematically optimal safe zones.
+- **Offline startup contract**: The app now validates required local checkpoints up front instead of silently degrading at runtime.
 - **Deep Clean Plate**: A true green-screen mode. Automatically calculates the silhouette of your entire body *after* generation to securely isolate the Try-On from your provided untouched background without clipping.
 - **Mask Dilation Engine**: Custom padding parameters (-10 to +30) to surgically expand AI rendering zones and completely eradicate original clothing "ghosting."
 - **Fractional Face Restoration**: Variable GFPGAN slider allowing you to seamlessly mix your original skin pores and freckles alongside AI face-symmetry enhancements.
@@ -122,6 +129,10 @@ Standard zero-shot image-conditioned diffusion networks (like CatVTON or OOTDiff
 ---
 *Architected and developed with 🛡️ by Antigravity*
 ---
+
+## Legacy Upstream Reference
+
+The remaining sections below are preserved from the upstream CatVTON project as reference material for the base model, research background, and original training/inference workflows. They are **not** the install or runtime contract for this standalone repository.
 
 
 

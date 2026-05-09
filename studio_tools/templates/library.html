@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Garment Library — Try-On Studio</title>
+    <link rel="stylesheet" href="/static/global.css">
+</head>
+<body>
+    {% include 'navbar.html' %}
+
+    <div class="container">
+        <h1>Garment Library</h1>
+        <div class="card">
+            <ul class="package-list">
+                {% for package in packages %}
+                <li class="package-item">
+                    <span class="package-name">{{ package }}</span>
+                    <button>View Details</button>
+                </li>
+                {% else %}
+                <li class="point-item">No packages saved yet. Go to Setup Garment to create one.</li>
+                {% endfor %}
+            </ul>
+        </div>
+    </div>
+</body>
+</html>
