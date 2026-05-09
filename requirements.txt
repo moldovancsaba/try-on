@@ -5,9 +5,9 @@ diffusers>=0.24.0
 transformers>=4.36.0
 accelerate>=0.25.0
 gradio>=4.20.0
-opencv-python
+opencv-python-headless
 pillow
-numpy
+numpy<2
 tqdm
 requests
 onnxruntime; sys_platform == 'darwin' and 'arm' in platform_machine
@@ -24,3 +24,5 @@ cloudpickle
 pycocotools
 huggingface_hub
 scikit-image
+gfpgan>=1.3.8
+av==17.0.1

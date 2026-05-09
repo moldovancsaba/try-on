@@ -12,7 +12,7 @@ Terminal noise is an architectural failure.
 ## 2. The Performance Guard 🚀
 Apple Silicon performance is fragile.
 - **Protocol**: Call `torch.mps.empty_cache()` and `torch.mps.synchronize()` before every generation.
-- **Consistency**: Draft generation (10 steps) must always remain under 15 seconds. If speed drifts, audit GPU memory fragmentation immediately.
+- **Consistency**: The shipped standalone build is `High Quality` only. If latency or memory behavior drifts, audit scheduler selection, model paths, and GPU memory fragmentation before adding new speed modes.
 
 ## 3. Structural Integrity 🏛️
 Complexity must be earned, not assumed.
@@ -21,7 +21,7 @@ Complexity must be earned, not assumed.
 
 ## 4. Documentation as Code 📖
 If it isn't documented, it doesn't exist.
-- **Protocol**: Any neural handshake change (e.g., LoRA loading, Scheduler switching) must be mirrored in the `README.md` and feature-mapped in the code comments.
+- **Protocol**: Any runtime contract change (device selection, offline model paths, scheduler switching, optional feature removal) must be mirrored in the `README.md` and feature-mapped in the code comments.
 
 ---
 *If any change breaks these rules, it must be rolled back. There is no compromise on the Golden Standard.* 🛡️🎴

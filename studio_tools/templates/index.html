@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Try-On Setup Studio</title>
+    <link rel="stylesheet" href="/static/global.css">
+</head>
+<body>
+    {% include 'navbar.html' %}
+
+<div class="container">
+    <div class="toolbar">
+        <input type="text" id="packageName" placeholder="Package Name (e.g. ufa_jersey)">
+        
+        <input type="file" id="fileUpload" accept="image/*">
+        
+        <select id="mannequinSelect">
+            <option value="front">Mannequin: Front</option>
+            <option value="left">Mannequin: Front-Left (3/4)</option>
+            <option value="right">Mannequin: Front-Right (3/4)</option>
+        </select>
+        
+        <select id="pantLength">
+            <option value="default">Pants: Default / Long</option>
+            <option value="shorts">Pants: Shorts</option>
+        </select>
+        
+        <select id="sleeveLength">
+            <option value="default">Sleeves: Default / Long</option>
+            <option value="short_sleeve">Sleeves: Short</option>
+            <option value="sleeveless">Sleeves: Sleeveless</option>
+        </select>
+
+        <button onclick="savePackage()">Export Package</button>
+    </div>
+    
+    <div class="instructions">
+        <strong>Instructions:</strong> Click on the Clothing to set an anchor point, then click the exact matching anatomical location on the Mannequin. 
+        Aim for 8-12 points (Shoulders, armpits, hem, logos). Press 'U' to undo the last click.
+    </div>
+
+    <div class="canvases">
+        <div class="canvas-container">
+            <h3 class="canvas-title">1. Flat Clothing</h3>
+            <canvas id="canvasA" width="512" height="1024"></canvas>
+        </div>
+        <div class="canvas-container">
+            <h3 class="canvas-title">2. Reference Mannequin</h3>
+            <canvas id="canvasB" width="512" height="1024"></canvas>
+        </div>
+    </div>
+    
+    <div class="point-list" id="pointList">
+        <h3>Anchor Points (<span id="pointCount">0</span>/16)</h3>
+        <div id="pointsContainer"></div>
+    </div>
+</div>
+
+<script>
+    const canvasA = document.getElementById('canvasA');
+    const ctxA = canvasA.getContext('2d');
+    const canvasB = document.getElementById('canvasB');
+    const ctxB = canvasB.getContext('2d');
+
+    // Read colors from the global CSS design system — no hardcoded values.
+    const CSS = getComputedStyle(document.documentElement);
+    const COLOR_POINT_PLACED  = CSS.getPropertyValue('--color-success').trim();
+    const COLOR_POINT_PENDING = CSS.getPropertyValue('--color-accent').trim();
+    const COLOR_DOT_LABEL     = CSS.getPropertyValue('--color-bg').trim();
+
+    let garmentImg = new Image();
+    let garmentFilename = '';
+    let mannequinImg = new Image();
+    
+    // State
+    let allPoints = { front: [], left: [], right: [] };
+    let points = allPoints['front'];
+    let pendingGarmentPoint = null; 
+    let currentMannequin = 'front';
+    
+    // Load Mannequin
+    function loadMannequin() {
+        mannequinImg.src = `/maps/mannequin_${currentMannequin}.png`;
+        mannequinImg.onload = draw;
+    }
+    
+    document.getElementById('mannequinSelect').addEventListener('change', (e) => {
+        currentMannequin = e.target.value;
+        points = allPoints[currentMannequin]; // switch active point array instead of clearing
+        pendingGarmentPoint = null;
+        updatePointList();
+        loadMannequin();
+    });
+    
+    // Handle Upload
+    document.getElementById('fileUpload').addEventListener('change', async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        
+        const formData = new FormData();
+        formData.append('file', file);
+        
+        const res = await fetch('/upload_garment', { method: 'POST', body: formData });
+        const data = await res.json();
+        
+        garmentFilename = data.filename;
+        garmentImg.src = data.url;
+        garmentImg.onload = draw;
+    });
+    
+    // Drawing
+    function draw() {
+        // Clear
+        ctxA.clearRect(0, 0, canvasA.width, canvasA.height);
+        ctxB.clearRect(0, 0, canvasB.width, canvasB.height);
+        
+        // Draw Images (scale to fit if needed, but assuming standard sizes for now)
+        if (garmentImg.src) {
+            // center and scale
+            const scale = Math.min(canvasA.width / garmentImg.width, canvasA.height / garmentImg.height);
+            const w = garmentImg.width * scale;
+            const h = garmentImg.height * scale;
+            const x = (canvasA.width - w) / 2;
+            const y = (canvasA.height - h) / 2;
+            ctxA.drawImage(garmentImg, x, y, w, h);
+        }
+        
+        if (mannequinImg.src) {
+            ctxB.drawImage(mannequinImg, 0, 0, canvasB.width, canvasB.height);
+        }
+        
+        // Draw Points
+        points.forEach((p, i) => {
+            drawDot(ctxA, p.garment.x, p.garment.y, i + 1, COLOR_POINT_PLACED);
+            if (p.mannequin) {
+                drawDot(ctxB, p.mannequin.x, p.mannequin.y, i + 1, COLOR_POINT_PLACED);
+            }
+        });
+
+        // Draw pending point
+        if (pendingGarmentPoint) {
+            drawDot(ctxA, pendingGarmentPoint.x, pendingGarmentPoint.y, points.length + 1, COLOR_POINT_PENDING);
+        }
+    }
+    
+    function drawDot(ctx, x, y, label, color) {
+        ctx.beginPath();
+        ctx.arc(x, y, 6, 0, 2 * Math.PI);
+        ctx.fillStyle = color;
+        ctx.fill();
+        ctx.stroke();
+        
+        ctx.fillStyle = COLOR_DOT_LABEL;
+        ctx.font = '10px Arial';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(label, x, y);
+    }
+    
+    // Interaction
+    canvasA.addEventListener('mousedown', (e) => {
+        if (pendingGarmentPoint) return; // Must finish current point first
+        if (points.length >= 16) { alert('Maximum 16 points reached.'); return; }
+        
+        const rect = canvasA.getBoundingClientRect();
+        pendingGarmentPoint = {
+            x: e.clientX - rect.left,
+            y: e.clientY - rect.top
+        };
+        draw();
+    });
+    
+    canvasB.addEventListener('mousedown', (e) => {
+        if (!pendingGarmentPoint) { alert('Click a point on the clothing first!'); return; }
+        
+        const rect = canvasB.getBoundingClientRect();
+        const manPoint = {
+            x: e.clientX - rect.left,
+            y: e.clientY - rect.top
+        };
+        
+        points.push({
+            garment: pendingGarmentPoint,
+            mannequin: manPoint
+        });
+        
+        pendingGarmentPoint = null;
+        updatePointList();
+        draw();
+    });
+    
+    // Undo
+    document.addEventListener('keydown', (e) => {
+        if (e.key.toLowerCase() === 'u') {
+            if (pendingGarmentPoint) {
+                pendingGarmentPoint = null;
+            } else if (points.length > 0) {
+                points.pop();
+                updatePointList();
+            }
+            draw();
+        }
+    });
+    
+    function updatePointList() {
+        document.getElementById('pointCount').innerText = points.length;
+        const container = document.getElementById('pointsContainer');
+        container.innerHTML = '';
+        points.forEach((p, i) => {
+            const div = document.createElement('div');
+            div.className = 'point-item';
+            div.innerHTML = `<span>Point ${i+1}</span> <span>Garment: (${Math.round(p.garment.x)}, ${Math.round(p.garment.y)}) &rarr; Mannequin: (${Math.round(p.mannequin.x)}, ${Math.round(p.mannequin.y)})</span>`;
+            container.appendChild(div);
+        });
+    }
+    
+    // Save
+    async function savePackage() {
+        const pkgName = document.getElementById('packageName').value.trim();
+        if (!pkgName) { alert('Enter a package name!'); return; }
+        if (!garmentFilename) { alert('Upload a garment first!'); return; }
+        if (points.length < 6) { alert('Set at least 6 points for a stable warp.'); return; }
+        
+        // Convert to scaled coordinates if garment was scaled in canvas
+        // Wait, for simplicity, we assume garment dimensions match canvas or we store raw canvas coords for now.
+        // Actually, the main script needs coordinates relative to the original garment image.
+        // Let's calculate the real coordinates:
+        const scale = Math.min(canvasA.width / garmentImg.width, canvasA.height / garmentImg.height);
+        const w = garmentImg.width * scale;
+        const h = garmentImg.height * scale;
+        const offsetX = (canvasA.width - w) / 2;
+        const offsetY = (canvasA.height - h) / 2;
+        
+        const realPoints = points.map(p => ({
+            garment: {
+                x: (p.garment.x - offsetX) / scale,
+                y: (p.garment.y - offsetY) / scale
+            },
+            mannequin: {
+                x: p.mannequin.x,
+                y: p.mannequin.y
+            }
+        }));
+        
+        const payload = {
+            package_name: pkgName,
+            garment_filename: garmentFilename,
+            mannequin_view: currentMannequin,
+            pant_length: document.getElementById('pantLength').value,
+            sleeve_length: document.getElementById('sleeveLength').value,
+            keypoints: realPoints
+        };
+        
+        const res = await fetch('/save_package', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        
+        const result = await res.json();
+        if (result.success) {
+            alert(`Package exported successfully to: ${result.path}`);
+        } else {
+            alert('Failed to save package.');
+        }
+    }
+    
+    // Init
+    loadMannequin();
+</script>
+
+</body>
+</html>

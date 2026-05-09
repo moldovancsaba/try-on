@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import shutil
 import sys
 import time
 import threading
@@ -15,21 +16,24 @@ from typing import Any
 import gradio as gr
 
 # ── Apple Silicon & Environment Optimization ──────────────────────────────────
+_MODELS_ROOT_STR = os.environ.get("TRYON_MODELS_ROOT", "/Users/Shared/Models")
 os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
 # Centralize HuggingFace Cache and enforce Absolute Offline Mode
-os.environ["HF_HOME"] = "/Users/Shared/Models/.cache/huggingface"
+os.environ["HF_HOME"] = str(Path(_MODELS_ROOT_STR).expanduser() / ".cache" / "huggingface")
 os.environ["HF_HUB_OFFLINE"] = "1"
 os.environ["TRANSFORMERS_OFFLINE"] = "1"
 
 # Silence Verbose Engine Logs
 import logging
-logging.getLogger("insightface").setLevel(logging.WARNING)
 logging.getLogger("onnxruntime").setLevel(logging.ERROR)
 
 
 import torch
 import logging
 import warnings
+
+if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+    os.environ.setdefault("SMF_CATVTON_USE_MPS", "1")
 
 # Silence higher-level library noise
 logging.getLogger("diffusers").setLevel(logging.ERROR)
@@ -48,7 +52,7 @@ if not hasattr(torchvision.transforms, "functional_tensor"):
 _ROOT         = Path(__file__).resolve().parent
 _VENDOR_ROOT  = _ROOT / "vendor"
 _CATVTON_ROOT = _VENDOR_ROOT / "CatVTON"
-_MODELS_ROOT  = Path("/Users/Shared/Models")
+_MODELS_ROOT  = Path(_MODELS_ROOT_STR).expanduser().resolve()
 
 # Internal sub-paths used by the package (Redirected to Master Standard Vault)
 _D2_ROOT      = _CATVTON_ROOT / "model" / "SCHP" / "mhp_extension" / "detectron2"
@@ -56,9 +60,55 @@ _DP_ROOT      = _D2_ROOT / "projects" / "DensePose"
 _MODELS_CAT   = _MODELS_ROOT / "processors" / "catvton-segmentation"
 _MODELS_SD    = _MODELS_ROOT / "checkpoints" / "sd15-inpainting"
 _MODELS_VAE   = _MODELS_ROOT / "vae" / "sd15-vae-ft-mse"
-_LORA_LCM     = _MODELS_ROOT / "loras" / "sd15-lcm" / "pytorch_lora_weights.safetensors"
-_MODELS_UP    = _MODELS_ROOT / "processors" / "upscalers"
 _MODELS_GF    = _MODELS_ROOT / "processors" / "face-restoration"
+_GFPGAN_PRIMARY = _MODELS_GF / "GFPGANv1.4.pth"
+_GFPGAN_LEGACY = _MODELS_ROOT / "processors" / "upscalers" / "GFPGANv1.3.pth"
+_GFPGAN_RUNTIME_DIR = _ROOT / "gfpgan" / "weights"
+_GFPGAN_RUNTIME_SUPPORT = {
+    "detection_Resnet50_Final.pth": _MODELS_GF / "detection_Resnet50_Final.pth",
+    "parsing_parsenet.pth": _MODELS_GF / "parsing_parsenet.pth",
+}
+
+
+def _has_mps() -> bool:
+    return hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
+
+
+def _preferred_device() -> str:
+    if torch.cuda.is_available():
+        return "cuda"
+    if _has_mps():
+        return "mps"
+    return "cpu"
+
+
+def _require_path(path: Path, *, label: str) -> None:
+    if not path.exists():
+        raise FileNotFoundError(
+            f"Missing required {label}: {path}. "
+            "Run ./install.sh to download the offline dependencies."
+        )
+
+
+def _resolve_gfpgan_checkpoint() -> Path:
+    if _GFPGAN_PRIMARY.exists():
+        return _GFPGAN_PRIMARY
+    if _GFPGAN_LEGACY.exists():
+        return _GFPGAN_LEGACY
+    raise FileNotFoundError(
+        "Missing GFPGAN checkpoint. "
+        f"Checked {_GFPGAN_PRIMARY} and {_GFPGAN_LEGACY}. "
+        "Run ./install.sh to download the offline dependencies."
+    )
+
+
+def _seed_gfpgan_runtime_weights() -> None:
+    _GFPGAN_RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+    for filename, source_path in _GFPGAN_RUNTIME_SUPPORT.items():
+        _require_path(source_path, label=f"GFPGAN support weight {filename}")
+        target_path = _GFPGAN_RUNTIME_DIR / filename
+        if not target_path.exists():
+            shutil.copy(source_path, target_path)
 
 # ── Bootstrap detectron2 / DensePose ──────────────────────────────────────────
 for _p in (_D2_ROOT, _DP_ROOT):
@@ -121,15 +171,15 @@ _LOCK    = threading.Lock()
 _PIPE    = None
 _MASKER  = None
 _ERROR   = None
-_UPSCALER = None
 _FACE_ENHANCER = None
-_FACE_APP = None # InsightFace Analysis
 _LOADED_VAE_TYPE = "hf" 
-_FACEID_LOADED = False
+_GFPGAN_READY = False
+_GFPGAN_ERROR = None
 _READY   = threading.Event()
 
 def _load_models():
-    global _PIPE, _MASKER, _ERROR, _CAT_PKG, _READY, _UPSCALER, _FACE_ENHANCER
+    global _PIPE, _MASKER, _ERROR, _CAT_PKG, _READY, _FACE_ENHANCER
+    global _GFPGAN_READY, _GFPGAN_ERROR
     import torch
     
     try:
@@ -139,11 +189,14 @@ def _load_models():
         from catvton.model.cloth_masker import AutoMasker
         from catvton.model.pipeline import CatVTONPipeline
 
+        _require_path(_MODELS_CAT / "DensePose", label="DensePose checkpoint")
+        _require_path(_MODELS_CAT / "SCHP", label="SCHP checkpoint")
+        _require_path(_MODELS_SD, label="Stable Diffusion inpainting checkpoint")
+        _require_path(_MODELS_VAE, label="VAE checkpoint")
+
         # Hardware selection
-        has_mps = hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
-        pipe_device = "mps" if has_mps else "cpu"
-        # Use MPS for masking if available to speed up DensePose/SCHP
-        mask_device = "mps" if has_mps else "cpu"
+        pipe_device = _preferred_device()
+        mask_device = pipe_device
 
         print(f"[try-on] Loading AutoMasker on {mask_device}...")
         masker = AutoMasker(
@@ -172,52 +225,29 @@ def _load_models():
         with _LOCK:
             _PIPE = pipe
             _MASKER = masker
-            
-            # Load LCM LoRA booster using modern PEFT logic
-            try:
-                # Modern LoRA handshake to eliminate FutureWarning
-                # Enable progress bar by not disabling it
-                from diffusers.utils import logging as diffusers_logging
-                diffusers_logging.set_verbosity_info() 
-                _PIPE.unet.load_lora_adapter(str(_LORA_LCM), adapter_name="lcm", prefix=None)
-            except Exception:
-                pass
 
-            # Load Enhancers (Optional)
+            # Load GFPGAN face restoration when fully available.
+            _GFPGAN_READY = False
+            _GFPGAN_ERROR = None
             try:
                 import warnings
                 with warnings.catch_warnings():
                     warnings.filterwarnings("ignore", category=UserWarning)
-                    from realesrgan import RealESRGANer
                     from gfpgan import GFPGANer
-                    
-                    model_path = _MODELS_UP / "RealESRGAN_x4plus.pth"
-                    if model_path.exists():
-                        from basicsr.archs.rrdbnet_arch import RRDBNet
-                        model = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=23, num_grow_ch=32, scale=4)
-                        _UPSCALER = RealESRGANer(scale=4, model_path=str(model_path), model=model, tile=400, tile_pad=10, pre_pad=0, half=True, device=pipe_device)
-                    
-                    face_path = _MODELS_GF / "GFPGANv1.3.pth"
-                    if face_path.exists():
-                        _FACE_ENHANCER = GFPGANer(model_path=str(face_path), upscale=1, arch='clean', channel_multiplier=2, device=pipe_device)
-            except Exception:
-                pass
-            
-            # Initialize FaceID Mirror (InsightFace) with Absolute Silence
-            try:
-                import logging
-                import contextlib
-                import io
-                
-                # Squelch ALL engine output during handshake
-                with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-                    from insightface.app import FaceAnalysis
-                    _FACE_APP = FaceAnalysis(name='antelopev2', root=str(_MODELS_ROOT / "analysis" / "insightface"), providers=['CPUExecutionProvider'])
-                    _FACE_APP.prepare(ctx_id=0, det_size=(640, 640))
-                
-                print("[try-on] Identity Mirror: ONLINE")
-            except Exception as e:
-                print(f"[warning] FaceID Mirror init fail: {e}")
+                    _seed_gfpgan_runtime_weights()
+                    face_path = _resolve_gfpgan_checkpoint()
+                    _FACE_ENHANCER = GFPGANer(
+                        model_path=str(face_path),
+                        upscale=1,
+                        arch="clean",
+                        channel_multiplier=2,
+                        device=pipe_device,
+                    )
+                    _GFPGAN_READY = True
+            except Exception as exc:
+                _GFPGAN_ERROR = str(exc)
+                _FACE_ENHANCER = None
+                print(f"[warning] GFPGAN unavailable: {exc}")
 
         _READY.set()
         print(f"[try-on] \u2713 Ready | Backend: {pipe_device.upper()}")
@@ -228,7 +258,7 @@ def _load_models():
         _READY.set()
         print(f"[try-on] Load failed: {exc}")
 
-def _inference(person_img, cloth_img, category, sleeve_length, pant_length, resolution, num_steps, guidance, seed, show_mask, mask_sharpness, mask_padding, detail_boost, face_restore_strength, preserve_head, lock_seed, use_vae_hf, use_faceid, faceid_strength, sampler_name, bg_plate, composite_strength, enable_deep_texture, warp_strength, progress=gr.Progress()):
+def _inference(person_img, cloth_img, category, sleeve_length, pant_length, resolution, num_steps, guidance, seed, show_mask, mask_sharpness, mask_padding, detail_boost, face_restore_strength, preserve_head, lock_seed, use_vae_hf, sampler_name, bg_plate, composite_strength, enable_deep_texture, warp_strength, progress=gr.Progress()):
     import torch
     import random
     import json
@@ -254,7 +284,7 @@ def _inference(person_img, cloth_img, category, sleeve_length, pant_length, reso
             "resolution": resolution, "steps": num_steps, "guidance": guidance,
             "seed": seed, "show_mask": show_mask, "mask_sharpness": mask_sharpness, "mask_padding": mask_padding,
             "detail_boost": detail_boost, "face_restore_strength": face_restore_strength, "preserve_head": preserve_head, 
-            "lock_seed": lock_seed, "use_vae_hf": use_vae_hf, "use_faceid": use_faceid, "faceid_strength": faceid_strength, 
+            "lock_seed": lock_seed, "use_vae_hf": use_vae_hf,
             "sampler_name": sampler_name, "composite_strength": composite_strength,
             "enable_deep_texture": enable_deep_texture, "warp_strength": warp_strength
         }
@@ -264,7 +294,7 @@ def _inference(person_img, cloth_img, category, sleeve_length, pant_length, reso
         print(f"[warning] Failed to save settings: {e}")
 
     # 🎭 Neural VAE Hot-Swap & Identity State
-    global _LOADED_VAE_TYPE, _FACEID_LOADED
+    global _LOADED_VAE_TYPE
     requested_vae = "hf" if use_vae_hf else "standard"
     if _LOADED_VAE_TYPE != requested_vae:
         progress(0, desc=f"Hot-swapping to {requested_vae} VAE...")
@@ -277,30 +307,6 @@ def _inference(person_img, cloth_img, category, sleeve_length, pant_length, reso
             ).to(_PIPE.device, dtype=_PIPE.vae_dtype)
             _LOADED_VAE_TYPE = requested_vae
         print(f"[try-on] VAE Hot-Swapped to {requested_vae}")
-
-    # 🧬 Identity Anchor Handshake
-    faceid_embeds = None
-    if use_faceid and _FACE_APP:
-        if not _FACEID_LOADED:
-            progress(0, desc="Loading Identity Anchor weights...")
-            bin_path = str(_MODELS_ROOT / "adapters" / "ip-adapter-faceid-sd15" / "ip-adapter-faceid_sd15.bin")
-            lora_path = str(_MODELS_ROOT / "loras" / "sd15-faceid" / "ip-adapter-faceid_sd15_lora.safetensors")
-            with _LOCK:
-                _PIPE.load_faceid_adapter(bin_path, lora_path)
-                _FACEID_LOADED = True
-        
-        # Scan face from person image
-        import numpy as np
-        person_np = np.array(person_img)
-        # Convert RGB to BGR for InsightFace
-        face_info = _FACE_APP.get(person_np[:, :, ::-1])
-        if face_info:
-            # Take the largest face if multiple are found
-            face_info = sorted(face_info, key=lambda x: (x.bbox[2] - x.bbox[0]) * (x.bbox[3] - x.bbox[1]), reverse=True)[0]
-            faceid_embeds = torch.from_numpy(face_info.embedding).unsqueeze(0)
-            print(f"[try-on] Identity Anchor Extracted.")
-        else:
-            print(f"[warning] No face found in person photo for FaceID.")
 
     # 🔒 Button Lockdown & Mining
     actual_seed = int(seed)
@@ -319,8 +325,8 @@ def _inference(person_img, cloth_img, category, sleeve_length, pant_length, reso
     if not isinstance(cloth_img, Image.Image):
         cloth_img = Image.fromarray(cloth_img)
 
-    # Resolution handling for speed
-    target_size = (384, 512) if resolution == "Fast (Draft)" else (768, 1024)
+    # Standalone build uses the stable high-quality render path only.
+    target_size = (768, 1024)
     person = resize_and_crop(person_img.convert("RGB"), target_size)
     cloth = resize_and_padding(cloth_img.convert("RGB"), target_size)
     
@@ -372,6 +378,19 @@ def _inference(person_img, cloth_img, category, sleeve_length, pant_length, reso
     elif mask_padding < 0:
         mask_pil = mask_pil.filter(ImageFilter.MinFilter(size=int(abs(mask_padding) * 2 + 1)))
 
+    # Fix hem V-cut artefact: expand the mask 8px downward so the composite
+    # does not clip the bottom edge of the garment into a V-shape.
+    _mask_arr = np.array(mask_pil.convert("L"))
+    for _row in range(_mask_arr.shape[0] - 1, max(0, _mask_arr.shape[0] - 100), -1):
+        if _mask_arr[_row].max() > 64:
+            _bottom = _row
+            _end = min(_mask_arr.shape[0], _bottom + 8)
+            _mask_arr[_bottom:_end, :] = np.maximum(
+                _mask_arr[_bottom:_end, :], _mask_arr[_row:_row+1, :]
+            )
+            break
+    mask_pil = Image.fromarray(_mask_arr).convert("L")
+
     mask_pil = VaeImageProcessor(
         vae_scale_factor=8, do_normalize=False,
         do_binarize=True, do_convert_grayscale=True,
@@ -382,52 +401,35 @@ def _inference(person_img, cloth_img, category, sleeve_length, pant_length, reso
     progress(0.2, desc=f"Masking done ({t_mask:.1f}s). Starting diffusion...")
     
     # Stability: Clear cache and synchronize for Apple Silicon
-    if torch.backends.mps.is_available():
+    if _has_mps():
         import torch.mps
         torch.mps.empty_cache()
         torch.mps.synchronize()
-        
-    gen = torch.Generator(device="mps").manual_seed(actual_seed)
+
+    generator_device = str(getattr(_PIPE, "device", _preferred_device()))
+    try:
+        gen = torch.Generator(device=generator_device).manual_seed(actual_seed)
+    except Exception:
+        gen = torch.Generator(device="cpu").manual_seed(actual_seed)
     print(f"[try-on] Run: res={resolution}, steps={num_steps}, guidance={guidance}, seed={actual_seed}")
     
-    # Speed Optimization & Likeness Toggles (Dynamic LoRA Handling)
-    from diffusers import LCMScheduler, EulerAncestralDiscreteScheduler, DPMSolverMultistepScheduler, UniPCMultistepScheduler
-    
-    active_adapters = []
-    adapter_weights = []
+    # Stable scheduler selection for the standalone build.
+    from diffusers import EulerAncestralDiscreteScheduler, DPMSolverMultistepScheduler, UniPCMultistepScheduler
+
+    if resolution == "Fast (Draft)":
+        yield None, None, "❌ Fast (Draft) is disabled in the standalone build. Use High Quality.", gr.update(), gr.update(interactive=True, value="Generate Try-On")
+        return
     
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        if int(num_steps) < 10:
-            _PIPE.noise_scheduler = LCMScheduler.from_config(_PIPE.noise_scheduler.config)
-            # LCM Safety Clamp: guidance over 2.0 burns the image
-            actual_guidance = min(float(guidance), 2.0)
-            active_adapters.append("lcm")
-            adapter_weights.append(1.0)
+        if sampler_name == "DPM++ 2M":
+            config = _PIPE.noise_scheduler.config
+            _PIPE.noise_scheduler = DPMSolverMultistepScheduler.from_config(config, use_karras_sigmas=True)
+        elif sampler_name == "UniPC":
+            _PIPE.noise_scheduler = UniPCMultistepScheduler.from_config(_PIPE.noise_scheduler.config)
         else:
-            if sampler_name == "DPM++ 2M":
-                config = _PIPE.noise_scheduler.config
-                _PIPE.noise_scheduler = DPMSolverMultistepScheduler.from_config(config, use_karras_sigmas=True)
-            elif sampler_name == "UniPC":
-                _PIPE.noise_scheduler = UniPCMultistepScheduler.from_config(_PIPE.noise_scheduler.config)
-            else:
-                _PIPE.noise_scheduler = EulerAncestralDiscreteScheduler.from_config(_PIPE.noise_scheduler.config)
-            actual_guidance = float(guidance)
-            
-    if use_faceid and _FACEID_LOADED:
-        active_adapters.append("faceid")
-        adapter_weights.append(float(faceid_strength))
-        
-    try:
-        if hasattr(_PIPE.unet, "set_adapters"):
-            if len(active_adapters) > 0:
-                _PIPE.unet.set_adapters(active_adapters, adapter_weights)
-                _PIPE.unet.enable_adapters()
-            else:
-                _PIPE.unet.disable_adapters()
-    except Exception as e:
-        if "No adapter loaded" not in str(e):
-            print(f"[warning] Adapter setup failed: {e}")
+            _PIPE.noise_scheduler = EulerAncestralDiscreteScheduler.from_config(_PIPE.noise_scheduler.config)
+        actual_guidance = float(guidance)
 
     # Run pipeline
     t_diff_start = time.monotonic()
@@ -447,30 +449,24 @@ def _inference(person_img, cloth_img, category, sleeve_length, pant_length, reso
             guidance_scale=actual_guidance,
             generator=gen,
             callback_steps=4,
-            faceid_embeds=faceid_embeds
         ):
-            if latents is not None:
-                # Decode intermediate state for live preview
-                if isinstance(latents, torch.Tensor):
-                    # Fast decode for preview
-                    with torch.no_grad():
-                        l = 1 / _PIPE.vae.config.scaling_factor * latents
-                        # Take only the first latent in the concat (the person)
-                        l = l.split(l.shape[-2] // 2, dim=-2)[0]
-                        preview = _PIPE.vae.decode(l.to(_PIPE.device, dtype=_PIPE.vae_dtype)).sample
-                        preview = (preview / 2 + 0.5).clamp(0, 1)
-                        if _PIPE.device == "mps":
-                            preview = preview.float()
-                        preview = preview.cpu().permute(0, 2, 3, 1).numpy()
-                        preview_img = numpy_to_pil(preview)[0]
-                        yield preview_img, None, f"🎞️ Building... {int((i/int(num_steps))*100)}%", gr.update(), gr.update()
-            else:
-                # latents holds the final image when t is None (the third slot)
-                result_img = latents 
-                pass
+            if isinstance(latents, torch.Tensor):
+                # Decode intermediate latents for live preview only.
+                with torch.no_grad():
+                    l = 1 / _PIPE.vae.config.scaling_factor * latents
+                    l = l.split(l.shape[-2] // 2, dim=-2)[0]
+                    preview = _PIPE.vae.decode(l.to(_PIPE.device, dtype=_PIPE.vae_dtype)).sample
+                    preview = (preview / 2 + 0.5).clamp(0, 1)
+                    if _PIPE.device == "mps":
+                        preview = preview.float()
+                    preview = preview.cpu().permute(0, 2, 3, 1).numpy()
+                    preview_img = numpy_to_pil(preview)[0]
+                    yield preview_img, None, f"🎞️ Building... {int((i/int(num_steps))*100)}%", gr.update(), gr.update()
+            elif latents is not None:
+                # Final pipeline payload may be a PIL image or list of images.
+                result_img = latents
 
-        # Final yield from pipeline is (steps, None, image)
-        if result_img is None:
+        if result_img is None and latents is not None:
             result_img = latents
         
     except Exception as e:
@@ -504,6 +500,12 @@ def _inference(person_img, cloth_img, category, sleeve_length, pant_length, reso
                 img_np = np.array(blended_pil)
             else:
                 img_np = restored_img
+        elif face_restore_strength > 0:
+            detail = _GFPGAN_ERROR or (
+                f"Missing checkpoint: expected one of {_GFPGAN_PRIMARY} or {_GFPGAN_LEGACY}"
+            )
+            yield None, None, f"❌ Face restoration is unavailable. {detail}", gr.update(), gr.update(interactive=True, value="Generate Try-On")
+            return
             
         # Optional Masked Sharpening for patterns
         if detail_boost > 0:
@@ -586,6 +588,7 @@ def build_ui():
     s = load_settings()
 
     with gr.Blocks(title="Try-On Local") as demo:
+        gr.HTML(get_navbar("try-on"))
         gr.Markdown("# Lightweight Local Virtual Try-On")
         
         with gr.Row():
@@ -606,7 +609,7 @@ def build_ui():
                 with gr.Accordion("Garment Cut Constraints (Optional)", open=False):
                     sleeve_length = gr.Radio(["default", "short_sleeve", "sleeveless"], value=s.get("sleeve_length", "default"), label="Sleeve Length Limit")
                     pant_length = gr.Radio(["default", "shorts"], value=s.get("pant_length", "default"), label="Pant Length Limit")
-                resolution = gr.Radio(["Fast (Draft)", "High Quality"], value=s.get("resolution", "Fast (Draft)"), label="Resolution")
+                resolution = gr.Radio(["High Quality"], value="High Quality", label="Resolution")
                 bg_plate = gr.Image(label="Background Plate (Optional)", type="numpy")
             with gr.Column():
                 with gr.Group():
@@ -626,8 +629,6 @@ def build_ui():
                 
                 with gr.Accordion("Options", open=True):
                     preserve_head = gr.Checkbox(label="Preserve Original Head ♥️ (Literal Pixel Paste)", value=s.get("preserve_head", True))
-                    use_faceid = gr.Checkbox(label="Face Identity Anchor (FaceID)", value=s.get("use_faceid", False))
-                    faceid_strength = gr.Slider(0.0, 1.0, value=s.get("faceid_strength", 0.6), step=0.1, label="Likeness Strength (FaceID)")
                     use_vae_hf = gr.Checkbox(label="High-Fidelity VAE (ft-mse)", value=s.get("use_vae_hf", True))
                     face_restore_strength = gr.Slider(0.0, 1.0, value=s.get("face_restore_strength", 1.0), step=0.1, label="Face Restore Blend (GFPGAN)")
                     sampler = gr.Dropdown(["Euler A", "DPM++ 2M", "UniPC"], value=s.get("sampler_name", "Euler A"), label="High Quality Sampler")
@@ -646,27 +647,16 @@ def build_ui():
         btn_1337.click(fn=lambda: (1337, True), outputs=[seed, lock_seed])
 
         # 🎛️ Auto-Preset: Snap sliders to optimal values per mode
-        def apply_preset(res):
-            if res == "Fast (Draft)":
-                return (
-                    gr.update(value=8),    # steps
-                    gr.update(value=1.5),  # guidance (safe LCM zone)
-                    gr.update(value=8),    # mask_sharpness
-                    gr.update(value=3),    # mask_padding (less aggressive at low res)
-                    gr.update(value=0.0),  # detail_boost (pointless at 384px)
-                    gr.update(value=0.0),  # face_restore_strength (skip on draft)
-                    gr.update(value=False), # preserve_head (resize kills quality)
-                )
-            else:  # High Quality
-                return (
-                    gr.update(value=30),   # steps
-                    gr.update(value=3.5),  # guidance (full Euler sweet spot)
-                    gr.update(value=12),   # mask_sharpness
-                    gr.update(value=5),    # mask_padding
-                    gr.update(value=0.4),  # detail_boost
-                    gr.update(value=0.6),  # face_restore_strength (natural blend)
-                    gr.update(value=True),  # preserve_head
-                )
+        def apply_preset(_res):
+            return (
+                gr.update(value=30),   # steps
+                gr.update(value=3.5),  # guidance (full Euler sweet spot)
+                gr.update(value=12),   # mask_sharpness
+                gr.update(value=5),    # mask_padding
+                gr.update(value=0.0),  # detail_boost off for first-fit validation
+                gr.update(value=0.0),  # face_restore_strength off for first-fit validation
+                gr.update(value=False),  # preserve_head off until fit is confirmed
+            )
         
         resolution.change(
             fn=apply_preset,
@@ -679,8 +669,8 @@ def build_ui():
             fn=_inference,
             inputs=[
                 person_in, cloth_in, category, sleeve_length, pant_length, resolution, steps, guidance, seed, 
-                show_mask, mask_sharpness, mask_padding, detail_boost, face_restore_strength, preserve_head, lock_seed, use_vae_hf, use_faceid,
-                faceid_strength, sampler, bg_plate, composite_strength, enable_deep_texture, warp_strength
+                show_mask, mask_sharpness, mask_padding, detail_boost, face_restore_strength, preserve_head, lock_seed, use_vae_hf,
+                sampler, bg_plate, composite_strength, enable_deep_texture, warp_strength
             ],
             outputs=[result_out, mask_out, status_out, seed, run_btn],
             show_progress="hidden"
@@ -688,11 +678,401 @@ def build_ui():
 
     return demo
 
+from fastapi import FastAPI, HTTPException, Request, File, UploadFile
+from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+import uvicorn
+import shutil
+import json
+from pydantic import BaseModel, Field
+
+fastapi_app = FastAPI()
+
+# Setup static files for the studio
+import os
+STUDIO_DIR = _ROOT / 'studio_tools'
+PACKAGES_DIR = os.path.join(STUDIO_DIR, 'packages')
+MAPS_DIR = os.path.join(STUDIO_DIR, 'master_maps')
+UPLOADS_DIR = os.path.join(STUDIO_DIR, 'uploads')
+TEMPLATES_DIR = os.path.join(STUDIO_DIR, 'templates')
+
+STATIC_DIR = os.path.join(STUDIO_DIR, 'static')
+
+os.makedirs(PACKAGES_DIR, exist_ok=True)
+os.makedirs(UPLOADS_DIR, exist_ok=True)
+os.makedirs(STATIC_DIR, exist_ok=True)
+
+fastapi_app.mount("/maps", StaticFiles(directory=MAPS_DIR), name="maps")
+fastapi_app.mount("/uploads", StaticFiles(directory=UPLOADS_DIR), name="uploads")
+fastapi_app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+def get_navbar(active="try-on"):
+    with open(os.path.join(TEMPLATES_DIR, "navbar.html"), "r") as f:
+        html = f.read()
+    # Simple manual replacement for Gradio since we aren't using Jinja here
+    html = html.replace("{{ 'active' if active == 'try-on' else '' }}", "active" if active == "try-on" else "")
+    html = html.replace("{{ 'active' if active == 'set-garment' else '' }}", "active" if active == "set-garment" else "")
+    html = html.replace("{{ 'active' if active == 'garments' else '' }}", "active" if active == "garments" else "")
+    return html
+
+from fastapi.templating import Jinja2Templates
+
+templates = Jinja2Templates(directory=TEMPLATES_DIR)
+
+@fastapi_app.get("/", response_class=HTMLResponse)
+async def landing(request: Request):
+    return templates.TemplateResponse(request=request, name="landing.html", context={"active": ""})
+
+@fastapi_app.get("/set-garment", response_class=HTMLResponse)
+async def setup_studio(request: Request):
+    return templates.TemplateResponse(request=request, name="index.html", context={"active": "set-garment"})
+
+@fastapi_app.get("/garments", response_class=HTMLResponse)
+async def library_page(request: Request):
+    packages = []
+    if os.path.exists(PACKAGES_DIR):
+        packages = [p for p in os.listdir(PACKAGES_DIR) if os.path.isdir(os.path.join(PACKAGES_DIR, p))]
+    return templates.TemplateResponse(request=request, name="library.html", context={"packages": packages, "active": "garments"})
+
+@fastapi_app.post("/upload_garment")
+async def upload_garment(file: UploadFile = File(...)):
+    filename = file.filename
+    save_path = os.path.join(UPLOADS_DIR, filename)
+    with open(save_path, "wb") as f:
+        shutil.copyfileobj(file.file, f)
+    return JSONResponse({'url': f'/uploads/{filename}', 'filename': filename})
+
+@fastapi_app.post("/save_package")
+async def save_package(request: Request):
+    data = await request.json()
+    package_name = data.get('package_name', 'default_package')
+    
+    package_dir = os.path.join(PACKAGES_DIR, package_name)
+    os.makedirs(package_dir, exist_ok=True)
+    
+    json_path = os.path.join(package_dir, 'package.json')
+    with open(json_path, 'w') as f:
+        json.dump(data, f, indent=4)
+        
+    garment_filename = data.get('garment_filename')
+    if garment_filename:
+        src_img = os.path.join(UPLOADS_DIR, garment_filename)
+        if os.path.exists(src_img):
+            shutil.copy(src_img, os.path.join(package_dir, garment_filename))
+            
+    return JSONResponse({'success': True, 'path': package_dir})
+
+def _studio_safe_name(value: str, *, field_name: str) -> str:
+    cleaned = Path(value).name.strip()
+    if not cleaned or cleaned in {".", ".."}:
+        raise HTTPException(status_code=400, detail=f"Invalid {field_name}.")
+    return cleaned
+
+
+def _studio_safe_subdir(value: str, *, field_name: str) -> str:
+    cleaned = value.strip().strip("/\\")
+    if not cleaned or cleaned in {".", ".."} or Path(cleaned).name != cleaned:
+        raise HTTPException(status_code=400, detail=f"Invalid {field_name}.")
+    return cleaned
+
+
+def _studio_resolve_relative(base_dir: Path | str, relative_path: str, *, field_name: str) -> Path:
+    root = Path(base_dir).resolve()
+    candidate = (root / relative_path.lstrip("/\\")).resolve()
+    if candidate != root and root not in candidate.parents:
+        raise HTTPException(status_code=400, detail=f"Invalid {field_name}.")
+    return candidate
+
+
+def _replace_fastapi_route(path: str, methods: set[str], endpoint) -> None:
+    if "fastapi_app" not in globals():
+        return
+    fastapi_app.router.routes = [
+        route for route in fastapi_app.router.routes
+        if not (
+            getattr(route, "path", None) == path
+            and methods.issubset(set(getattr(route, "methods", set())))
+        )
+    ]
+    fastapi_app.add_api_route(path, endpoint, methods=list(methods))
+
+
+class TryOnApiRequest(BaseModel):
+    person_image_path: str
+    garment_image_path: str
+    output_image_path: str
+    category: str = "Upper (T-Shirts, Hoodies)"
+    sleeve_length: str = "default"
+    pant_length: str = "default"
+    resolution: str = "High Quality"
+    steps: int = 24
+    guidance: float = 3.5
+    seed: int = 42
+    show_mask: bool = False
+    mask_sharpness: int = 12
+    mask_padding: int = 6
+    detail_boost: float = 0.0
+    face_restore_strength: float = 0.0
+    preserve_head: bool = False
+    lock_seed: bool = True
+    use_vae_hf: bool = True
+    sampler_name: str = "Euler A"
+    composite_strength: float = 0.0
+    enable_deep_texture: bool = False
+    warp_strength: float = 1.0
+
+
+class StudioPackageRequest(BaseModel):
+    package_name: str
+    garment_filename: str
+    mannequin_view: str
+    pant_length: str = "default"
+    sleeve_length: str = "default"
+    keypoints: list[dict[str, object]] = Field(default_factory=list)
+
+
+def _run_tryon_api_job(payload: TryOnApiRequest) -> dict[str, object]:
+    from PIL import Image
+
+    if not _READY.is_set():
+        raise HTTPException(status_code=503, detail="Models are still loading.")
+    if _ERROR:
+        raise HTTPException(status_code=500, detail=f"Model load error: {_ERROR}")
+
+    person_path = Path(payload.person_image_path).expanduser().resolve()
+    garment_path = Path(payload.garment_image_path).expanduser().resolve()
+    output_path = Path(payload.output_image_path).expanduser().resolve()
+
+    if not person_path.exists():
+        raise HTTPException(status_code=400, detail=f"Person image not found: {person_path}")
+    if not garment_path.exists():
+        raise HTTPException(status_code=400, detail=f"Garment image not found: {garment_path}")
+
+    person_img = Image.open(person_path).convert("RGB")
+    cloth_img = Image.open(garment_path).convert("RGB")
+
+    result_img = None
+    mask_img = None
+    status_text = None
+    for result_img, mask_img, status_text, _, _ in _inference(
+        person_img,
+        cloth_img,
+        payload.category,
+        payload.sleeve_length,
+        payload.pant_length,
+        payload.resolution,
+        payload.steps,
+        payload.guidance,
+        payload.seed,
+        payload.show_mask,
+        payload.mask_sharpness,
+        payload.mask_padding,
+        payload.detail_boost,
+        payload.face_restore_strength,
+        payload.preserve_head,
+        payload.lock_seed,
+        payload.use_vae_hf,
+        payload.sampler_name,
+        None,
+        payload.composite_strength,
+        payload.enable_deep_texture,
+        payload.warp_strength,
+    ):
+        pass
+
+    if result_img is None:
+        raise HTTPException(status_code=500, detail=f"Try-on did not produce an image. Status: {status_text}")
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    result_img.save(output_path)
+
+    response = {
+        "status": "succeeded",
+        "output_image_path": str(output_path),
+        "message": status_text or "ok",
+    }
+    if payload.show_mask and mask_img is not None:
+        mask_path = output_path.with_name(f"{output_path.stem}__mask{output_path.suffix}")
+        mask_img.save(mask_path)
+        response["mask_image_path"] = str(mask_path)
+    return response
+
+
+if "fastapi_app" in globals():
+    async def _safe_upload_garment(file: UploadFile = File(...)):
+        filename = _studio_safe_name(file.filename, field_name="filename")
+        upload_dir = Path(UPLOADS_DIR)
+        upload_dir.mkdir(parents=True, exist_ok=True)
+        destination = upload_dir / filename
+        with open(destination, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        return {"url": f"/uploads/{filename}", "filename": filename, "path": f"/uploads/{filename}"}
+
+
+    async def _safe_save_package(request: Request):
+        payload = StudioPackageRequest(**(await request.json()))
+        safe_package = _studio_safe_subdir(payload.package_name, field_name="package name")
+        garment_filename = _studio_safe_name(payload.garment_filename, field_name="garment filename")
+        package_dir = Path(PACKAGES_DIR) / safe_package
+        package_dir.mkdir(parents=True, exist_ok=True)
+
+        source_image_path = _studio_resolve_relative(
+            UPLOADS_DIR,
+            garment_filename,
+            field_name="garment filename",
+        )
+        if not source_image_path.exists():
+            raise HTTPException(status_code=404, detail="Garment image not found.")
+
+        destination_image_path = package_dir / "garment.png"
+        shutil.copy(source_image_path, destination_image_path)
+
+        metadata = {
+            "name": safe_package,
+            "category": None,
+            "mannequin_view": payload.mannequin_view,
+            "pant_length": payload.pant_length,
+            "sleeve_length": payload.sleeve_length,
+            "keypoints": payload.keypoints,
+            "template_file": None,
+        }
+        with open(package_dir / "metadata.json", "w") as f:
+            json.dump(metadata, f, indent=4)
+
+        with open(package_dir / "package.json", "w") as f:
+            json.dump(payload.model_dump(), f, indent=4)
+
+        return JSONResponse({"success": True, "path": str(package_dir)})
+
+
+    _replace_fastapi_route("/upload_garment", {"POST"}, _safe_upload_garment)
+    _replace_fastapi_route("/save_package", {"POST"}, _safe_save_package)
+
+    @fastapi_app.post("/api/tryon/run")
+    async def run_tryon_api(payload: TryOnApiRequest):
+        return JSONResponse(_run_tryon_api_job(payload))
+
+
+_original_inference = _inference
+
+
+def _inference(
+    person_img,
+    cloth_img,
+    category,
+    sleeve_length,
+    pant_length,
+    resolution,
+    num_steps,
+    guidance,
+    seed,
+    show_mask,
+    mask_sharpness,
+    mask_padding,
+    detail_boost,
+    face_restore_strength,
+    preserve_head,
+    lock_seed,
+    use_vae_hf,
+    sampler_name,
+    bg_plate,
+    composite_strength,
+    enable_deep_texture,
+    warp_strength,
+    progress=gr.Progress(),
+):
+    if resolution == "High Quality":
+        num_steps = max(int(num_steps), 20)
+        guidance = max(float(guidance), 3.0)
+        if category == "Upper (T-Shirts, Hoodies)":
+            mask_padding = max(int(mask_padding), 6)
+
+    yield from _original_inference(
+        person_img,
+        cloth_img,
+        category,
+        sleeve_length,
+        pant_length,
+        resolution,
+        num_steps,
+        guidance,
+        seed,
+        show_mask,
+        mask_sharpness,
+        mask_padding,
+        detail_boost,
+        face_restore_strength,
+        preserve_head,
+        lock_seed,
+        use_vae_hf,
+        sampler_name,
+        bg_plate,
+        composite_strength,
+        enable_deep_texture,
+        warp_strength,
+        progress=progress,
+    )
+
+
 if __name__ == "__main__":
     threading.Thread(target=_load_models, daemon=True).start()
     demo = build_ui()
-    demo.launch(
-        server_name="127.0.0.1", 
-        server_port=7860,
-        theme=gr.themes.Soft()
+
+    # Build unified dark theme using Gradio's theming API.
+    # This is the ONLY correct way to control Gradio's compiled Svelte styles.
+    # Do NOT use CSS variable injection for Gradio colours — it is ignored by Gradio's shadow DOM.
+    gradio_theme = gr.themes.Base(
+        font=gr.themes.GoogleFont("Inter"),
+        font_mono=gr.themes.GoogleFont("JetBrains Mono"),
+    ).set(
+        body_background_fill="#0b0b0f",
+        body_background_fill_dark="#0b0b0f",
+        block_background_fill="#16161e",
+        block_background_fill_dark="#16161e",
+        block_border_color="#2a2a37",
+        block_border_color_dark="#2a2a37",
+        panel_background_fill="#16161e",
+        panel_background_fill_dark="#16161e",
+        panel_border_color="#2a2a37",
+        panel_border_color_dark="#2a2a37",
+        input_background_fill="#1f1f28",
+        input_background_fill_dark="#1f1f28",
+        input_border_color="#3a3a4a",
+        input_border_color_dark="#3a3a4a",
+        input_border_color_focus="#7e9cd8",
+        input_border_color_focus_dark="#7e9cd8",
+        body_text_color="#dcd7ba",
+        body_text_color_dark="#dcd7ba",
+        block_title_text_color="#dcd7ba",
+        block_title_text_color_dark="#dcd7ba",
+        block_label_text_color="#727169",
+        block_label_text_color_dark="#727169",
+        input_placeholder_color="#727169",
+        input_placeholder_color_dark="#727169",
+        button_primary_background_fill="#7e9cd8",
+        button_primary_background_fill_dark="#7e9cd8",
+        button_primary_background_fill_hover="#b4befe",
+        button_primary_background_fill_hover_dark="#b4befe",
+        button_primary_text_color="#0b0b0f",
+        button_primary_text_color_dark="#0b0b0f",
+        button_secondary_background_fill="#1f1f28",
+        button_secondary_background_fill_dark="#1f1f28",
+        button_secondary_background_fill_hover="#2a2a37",
+        button_secondary_background_fill_hover_dark="#2a2a37",
+        button_secondary_text_color="#dcd7ba",
+        button_secondary_text_color_dark="#dcd7ba",
+        slider_color="#7e9cd8",
+        slider_color_dark="#7e9cd8",
+        block_radius="12px",
+        input_radius="4px",
+        button_small_radius="4px",
+        button_large_radius="4px",
+        container_radius="12px",
     )
+
+    # Minimal structural CSS only — no colours, those are owned by gradio_theme.
+    gradio_extra_css = "footer, .built-with-gradio { display: none !important; }"
+
+    app = gr.mount_gradio_app(fastapi_app, demo, path="/try-on", theme=gradio_theme, css=gradio_extra_css)
+
+    uvicorn.run(app, host="127.0.0.1", port=7860)

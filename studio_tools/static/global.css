@@ -1,0 +1,481 @@
+/**
+ * ============================================================
+ * TRY-ON STUDIO — GLOBAL DESIGN SYSTEM
+ * ============================================================
+ * This is the SINGLE source of truth for all styling.
+ *
+ * RULES:
+ *  - No <style> tags in any HTML template, ever.
+ *  - No inline style="" attributes on any element, ever.
+ *  - No hardcoded color, size, or spacing values in templates.
+ *  - All new components must be added as classes here first.
+ *  - All Gradio theme overrides live in the Gradio section below.
+ * ============================================================
+ */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
+/* ============================================================
+   1. DESIGN TOKENS
+   ============================================================ */
+
+:root {
+    /* Background */
+    --color-bg:        #0b0b0f;
+    --color-panel:     #16161e;
+    --color-input:     #1f1f28;
+
+    /* Borders */
+    --color-border:    #2a2a37;
+    --color-border-hi: #3a3a4a;
+
+    /* Text */
+    --color-text:      #dcd7ba;
+    --color-text-dim:  #727169;
+
+    /* Accent */
+    --color-accent:    #7e9cd8;
+    --color-accent-hi: #b4befe;
+
+    /* Status */
+    --color-success:   #98bb6c;
+    --color-error:     #e82424;
+
+    /* Spacing */
+    --space-xs: 4px;
+    --space-sm: 8px;
+    --space-md: 16px;
+    --space-lg: 24px;
+    --space-xl: 40px;
+
+    /* Radius */
+    --radius-sm: 4px;
+    --radius-md: 8px;
+    --radius-lg: 12px;
+
+    /* Typography */
+    --font-family: 'Inter', sans-serif;
+    --font-size-xs: 12px;
+    --font-size-sm: 13px;
+    --font-size-md: 14px;
+    --font-size-lg: 18px;
+    --font-size-xl: 32px;
+    --font-size-hero: 64px;
+
+    /* Layout */
+    --nav-height: 64px;
+    --container-max: 1200px;
+}
+
+
+/* ============================================================
+   2. RESET & BASE
+   ============================================================ */
+
+*, *::before, *::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    -webkit-font-smoothing: antialiased;
+}
+
+html, body {
+    font-family: var(--font-family);
+    font-size: var(--font-size-md);
+    background: var(--color-bg);
+    color: var(--color-text);
+    line-height: 1.6;
+}
+
+h1, h2, h3, h4 {
+    font-weight: 700;
+    line-height: 1.2;
+    color: var(--color-text);
+}
+
+h1 { font-size: var(--font-size-xl); }
+h2 { font-size: var(--font-size-lg); }
+h3 { font-size: var(--font-size-md); font-weight: 600; }
+
+p {
+    color: var(--color-text-dim);
+    line-height: 1.7;
+}
+
+a {
+    color: var(--color-accent);
+    text-decoration: none;
+}
+
+
+/* ============================================================
+   3. LAYOUT
+   ============================================================ */
+
+.container {
+    max-width: var(--container-max);
+    margin: var(--space-xl) auto;
+    padding: 0 var(--space-md);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-lg);
+}
+
+
+/* ============================================================
+   4. NAVIGATION
+   ============================================================ */
+
+.navbar {
+    height: var(--nav-height);
+    background: var(--color-bg);
+    border-bottom: 1px solid var(--color-border);
+    display: flex;
+    align-items: center;
+    padding: 0 var(--space-xl);
+    gap: var(--space-xl);
+    position: sticky;
+    top: 0;
+    z-index: 9999;
+}
+
+.nav-logo {
+    font-size: var(--font-size-md);
+    font-weight: 800;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--color-accent);
+    text-decoration: none;
+}
+
+.nav-links {
+    display: flex;
+    gap: var(--space-lg);
+}
+
+.nav-link {
+    font-size: var(--font-size-sm);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--color-text-dim);
+    text-decoration: none;
+    transition: color 0.15s ease;
+}
+
+.nav-link:hover,
+.nav-link.active {
+    color: var(--color-text);
+}
+
+
+/* ============================================================
+   5. CARD
+   ============================================================ */
+
+.card {
+    background: var(--color-panel);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    padding: var(--space-lg);
+}
+
+
+/* ============================================================
+   6. TOOLBAR
+   ============================================================ */
+
+.toolbar {
+    background: var(--color-panel);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    padding: var(--space-md) var(--space-lg);
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-sm);
+    align-items: center;
+}
+
+
+/* ============================================================
+   7. FORM ELEMENTS — Inputs, Selects
+   ============================================================ */
+
+input[type="text"],
+input[type="file"],
+select {
+    font-family: var(--font-family);
+    font-size: var(--font-size-sm);
+    color: var(--color-text);
+    background: var(--color-input);
+    border: 1px solid var(--color-border-hi);
+    border-radius: var(--radius-sm);
+    padding: var(--space-sm) var(--space-md);
+    outline: none;
+    transition: border-color 0.15s ease;
+}
+
+input[type="text"]:focus,
+select:focus {
+    border-color: var(--color-accent);
+}
+
+input[type="text"]::placeholder {
+    color: var(--color-text-dim);
+}
+
+
+/* ============================================================
+   8. BUTTONS
+   ============================================================ */
+
+button,
+.btn {
+    font-family: var(--font-family);
+    font-size: var(--font-size-sm);
+    font-weight: 700;
+    color: var(--color-bg);
+    background: var(--color-accent);
+    border: none;
+    border-radius: var(--radius-sm);
+    padding: var(--space-sm) var(--space-lg);
+    cursor: pointer;
+    transition: background 0.15s ease, transform 0.1s ease;
+    white-space: nowrap;
+}
+
+button:hover,
+.btn:hover {
+    background: var(--color-accent-hi);
+    transform: translateY(-1px);
+}
+
+button:active,
+.btn:active {
+    transform: translateY(0);
+}
+
+
+/* ============================================================
+   9. INSTRUCTIONS BAR
+   ============================================================ */
+
+.instructions {
+    font-size: var(--font-size-sm);
+    color: var(--color-text-dim);
+    padding: var(--space-sm) 0;
+}
+
+.instructions strong {
+    color: var(--color-text);
+    font-weight: 600;
+}
+
+
+/* ============================================================
+   10. CANVAS LAYOUT
+   ============================================================ */
+
+.canvases {
+    display: flex;
+    flex-direction: row;
+    gap: var(--space-lg);
+    justify-content: center;
+    width: 100%;
+}
+
+.canvas-container {
+    background: var(--color-panel);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    flex: 1;
+    min-width: 0;
+}
+
+.canvas-title {
+    font-size: var(--font-size-xs);
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--color-text-dim);
+    text-align: center;
+    padding: var(--space-md) 0 var(--space-sm);
+}
+
+canvas {
+    display: block;
+    cursor: crosshair;
+}
+
+
+/* ============================================================
+   11. POINT LIST
+   ============================================================ */
+
+.point-list {
+    background: var(--color-panel);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    padding: var(--space-lg);
+    max-height: 260px;
+    overflow-y: auto;
+}
+
+.point-list h3 {
+    color: var(--color-text-dim);
+    font-size: var(--font-size-sm);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: var(--space-sm);
+}
+
+.point-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--space-sm) 0;
+    border-bottom: 1px solid var(--color-border);
+    font-size: var(--font-size-sm);
+    color: var(--color-text-dim);
+}
+
+.point-item:last-child {
+    border-bottom: none;
+}
+
+
+/* ============================================================
+   12. LIBRARY LIST
+   ============================================================ */
+
+.package-list {
+    list-style: none;
+}
+
+.package-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--space-md) 0;
+    border-bottom: 1px solid var(--color-border);
+}
+
+.package-item:last-child {
+    border-bottom: none;
+}
+
+.package-name {
+    font-weight: 600;
+    color: var(--color-text);
+}
+
+
+/* ============================================================
+   13. HERO (Landing Page)
+   ============================================================ */
+
+.hero {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: calc(100vh - var(--nav-height));
+    text-align: center;
+    gap: var(--space-xl);
+    padding: var(--space-xl) var(--space-md);
+}
+
+.hero-title {
+    font-size: var(--font-size-hero);
+    font-weight: 800;
+    letter-spacing: -2px;
+    line-height: 1.1;
+}
+
+.hero-title-accent {
+    color: var(--color-accent);
+}
+
+.hero-subtitle {
+    font-size: var(--font-size-lg);
+    color: var(--color-text-dim);
+    max-width: 480px;
+    line-height: 1.7;
+}
+
+.nav-cards {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: var(--space-lg);
+    width: 100%;
+    max-width: 900px;
+}
+
+.nav-card {
+    background: var(--color-panel);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    padding: var(--space-xl) var(--space-lg);
+    text-decoration: none;
+    color: var(--color-text);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+    transition: border-color 0.2s ease, transform 0.2s ease;
+}
+
+.nav-card:hover {
+    border-color: var(--color-accent);
+    transform: translateY(-4px);
+}
+
+.nav-card-icon {
+    font-size: var(--font-size-xl);
+}
+
+.nav-card-title {
+    font-size: var(--font-size-lg);
+    font-weight: 700;
+    color: var(--color-text);
+}
+
+.nav-card-desc {
+    font-size: var(--font-size-sm);
+    color: var(--color-text-dim);
+    line-height: 1.6;
+}
+
+
+/* ============================================================
+   14. GRADIO OVERRIDES
+   Force Gradio's internal components to match this design system.
+   ============================================================ */
+
+:root {
+    /* Map Gradio tokens to our design tokens */
+    --body-background-fill:                var(--color-bg);
+    --block-background-fill:               var(--color-panel);
+    --block-border-color:                  var(--color-border);
+    --block-title-text-color:              var(--color-text);
+    --block-label-text-color:              var(--color-text-dim);
+    --input-background-fill:              var(--color-input);
+    --input-border-color:                  var(--color-border-hi);
+    --button-primary-background-fill:      var(--color-accent);
+    --button-primary-text-color:           var(--color-bg);
+    --button-primary-background-fill-hover: var(--color-accent-hi);
+    --button-secondary-background-fill:    var(--color-input);
+    --button-secondary-text-color:         var(--color-text);
+    --slider-color:                        var(--color-accent);
+    --loader-color:                        var(--color-accent);
+    --body-text-color:                     var(--color-text);
+    --font:                                'Inter', sans-serif;
+}
+
+/* Hide Gradio footer branding */
+footer,
+.built-with-gradio,
+.svelte-1p9xomd {
+    display: none !important;
+}

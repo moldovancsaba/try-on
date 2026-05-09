@@ -1,49 +1,74 @@
 #!/bin/bash
 
+set -euo pipefail
+
 # 👕 Local Virtual Try-On - Standard Installer
-# Ensures your environment and neural weights are perfectly aligned.
+# Ensures the local environment and offline model cache match the runtime contract.
+
+cd "$(dirname "$0")"
 
 echo "🛡️ Starting Golden Standard Installation..."
 
-# 1. Environment Check
+MODELS_ROOT="${TRYON_MODELS_ROOT:-/Users/Shared/Models}"
 VENV_DIR=".venv311"
+
 if [ ! -d "$VENV_DIR" ]; then
     echo "[try-on] Creating fresh .venv311 with Python 3.11..."
-    /opt/homebrew/bin/python3.11 -m venv "$VENV_DIR"
+    if command -v python3.11 >/dev/null 2>&1; then
+        python3.11 -m venv "$VENV_DIR"
+    elif [ -x /opt/homebrew/bin/python3.11 ]; then
+        /opt/homebrew/bin/python3.11 -m venv "$VENV_DIR"
+    else
+        echo "[try-on] Python 3.11 is required but was not found."
+        exit 1
+    fi
 fi
 
 source "$VENV_DIR/bin/activate"
 
-# 2. Dependency Audit
-echo "[try-on] Syncing neural dependencies..."
-pip install --upgrade pip
-pip install -r requirements.txt --quiet
+echo "[try-on] Syncing Python dependencies..."
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
 
-# 3. Neural Weight Synchronization
-echo "[try-on] Synchronizing Centralized Neural Hub (/Users/Shared/Models/)..."
-MODELS_ROOT="/Users/Shared/Models"
-mkdir -p "$MODELS_ROOT"
+echo "[try-on] Synchronizing offline model hub at $MODELS_ROOT ..."
+mkdir -p \
+    "$MODELS_ROOT/processors/catvton-segmentation" \
+    "$MODELS_ROOT/checkpoints/sd15-inpainting" \
+    "$MODELS_ROOT/vae/sd15-vae-ft-mse" \
+    "$MODELS_ROOT/processors/face-restoration" \
+    "$MODELS_ROOT/processors/upscalers"
 
-echo ">> Downloading CatVTON Backend & Segmentation Models..."
-huggingface-cli download zhengchong/CatVTON --include "*DensePose*" "*SCHP*" --local-dir "$MODELS_ROOT/processors/catvton-segmentation"
+echo ">> Downloading CatVTON segmentation dependencies..."
+huggingface-cli download zhengchong/CatVTON \
+    --include "*DensePose*" "*SCHP*" \
+    --local-dir "$MODELS_ROOT/processors/catvton-segmentation"
 
-echo ">> Downloading LCM LoRA (Fast Drafting)..."
-huggingface-cli download latent-consistency/lcm-lora-sdv1-5 pytorch_lora_weights.safetensors --local-dir "$MODELS_ROOT/loras/sd15-lcm"
+echo ">> Downloading Stable Diffusion v1.5 inpainting base..."
+huggingface-cli download runwayml/stable-diffusion-inpainting \
+    --local-dir "$MODELS_ROOT/checkpoints/sd15-inpainting"
 
-echo ">> Downloading Inpainting Base (Stable Diffusion v1.5)..."
-huggingface-cli download runwayml/stable-diffusion-inpainting --local-dir "$MODELS_ROOT/sd/v1-5-pruned-emaonly-inpainting"
+echo ">> Downloading VAE checkpoint..."
+huggingface-cli download stabilityai/sd-vae-ft-mse \
+    --local-dir "$MODELS_ROOT/vae/sd15-vae-ft-mse"
 
-echo ">> Downloading InsightFace Anchors (antelopev2)..."
-huggingface-cli download DIAMONIK7777/antelopev2 --local-dir "$MODELS_ROOT/analysis/insightface/models/antelopev2"
+echo ">> Downloading GFPGAN checkpoint..."
+curl -L -s \
+    "https://github.com/TencentARC/GFPGAN/releases/download/v1.3.0/GFPGANv1.4.pth" \
+    -o "$MODELS_ROOT/processors/face-restoration/GFPGANv1.4.pth"
 
-echo ">> Downloading GFPGAN & RealESRGAN (VFX Post-Processing)..."
-mkdir -p "$MODELS_ROOT/processors/face-restoration"
-mkdir -p "$MODELS_ROOT/processors/upscalers"
-curl -L -s "https://github.com/TencentARC/GFPGAN/releases/download/v1.3.0/GFPGANv1.4.pth" -o "$MODELS_ROOT/processors/face-restoration/GFPGANv1.4.pth"
-curl -L -s "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth" -o "$MODELS_ROOT/processors/upscalers/RealESRGAN_x4plus.pth"
+echo ">> Downloading GFPGAN auxiliary weights for offline runtime..."
+curl -L -s \
+    "https://github.com/xinntao/facexlib/releases/download/v0.1.0/detection_Resnet50_Final.pth" \
+    -o "$MODELS_ROOT/processors/face-restoration/detection_Resnet50_Final.pth"
+curl -L -s \
+    "https://github.com/xinntao/facexlib/releases/download/v0.2.2/parsing_parsenet.pth" \
+    -o "$MODELS_ROOT/processors/face-restoration/parsing_parsenet.pth"
 
-echo "✅ All neural weights successfully synchronized to $MODELS_ROOT"
+if [ -f "$MODELS_ROOT/processors/upscalers/GFPGANv1.3.pth" ] && [ ! -f "$MODELS_ROOT/processors/face-restoration/GFPGANv1.3.pth" ]; then
+    cp "$MODELS_ROOT/processors/upscalers/GFPGANv1.3.pth" "$MODELS_ROOT/processors/face-restoration/GFPGANv1.3.pth"
+fi
 
-echo "🚀 Installation Complete. You are ready to run ./run.sh"
+echo "✅ Offline dependencies synchronized to $MODELS_ROOT"
+echo "🚀 Installation complete. You are ready to run ./run.sh"
 
 chmod +x run.sh
