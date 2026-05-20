@@ -1,3 +1,10 @@
+"""
+Legacy standalone Flask helper for the garment studio.
+
+The shipped app mounts the studio routes from `app.py` via FastAPI. This file is
+kept only as a compatibility/dev helper and is not the primary production entrypoint.
+"""
+
 from flask import Flask, render_template, request, jsonify, send_from_directory
 import os
 import json
@@ -47,12 +54,12 @@ def save_package():
     package_dir = os.path.join(PACKAGES_DIR, package_name)
     os.makedirs(package_dir, exist_ok=True)
     
-    # Save JSON
+    # Persist the submitted package payload for local studio workflows.
     json_path = os.path.join(package_dir, 'package.json')
     with open(json_path, 'w') as f:
         json.dump(data, f, indent=4)
         
-    # Copy garment image to package
+    # Copy the uploaded garment asset into the package directory when present.
     garment_filename = data.get('garment_filename')
     if garment_filename:
         src_img = os.path.join(UPLOADS_DIR, garment_filename)

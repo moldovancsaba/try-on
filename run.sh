@@ -61,7 +61,8 @@ if [ -n "${existing_pid}" ]; then
     esac
 fi
 
-# Silence library noise for a clean terminal
+# Filter a small set of recurring startup noise lines for readability.
+# This is presentation-only and should not be treated as a substitute for fixing real warnings at the source.
 python -u app.py 2>&1 | \
     grep --line-buffered -v "NOTE: Redirects" | \
     grep --line-buffered -v "Class AVF" | \

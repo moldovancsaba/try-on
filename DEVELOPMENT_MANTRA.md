@@ -1,27 +1,77 @@
-# 💎 The Virtual Try-On Development Mantra
+# Try-On Studio Development Mantra
 
-**"Maintain Silence. Prioritize Quality. Guard the Baseline."**
+This file defines the maintenance rules for the standalone app shipped in this repository.
 
-This document defines the inviolable standards of the Local Try-On project. Every developer (AI or Human) must respect these rules to preserve the "Golden Standard" established on April 21st, 2026.
+## 1. Runtime Contract Comes First
 
-## 1. The Silence Mandate 🛡️
-Terminal noise is an architectural failure.
-- **Protocol**: Silence library noise (Diffusers, Transformers, Torch) at the source using internal Python loggers or context managers. 
-- **The "No-Grep" Rule**: Never use `grep` filters in `run.sh` to hide errors. If a warning exists, it must be solved inside the Python core so that `tqdm` progress bars remain perfectly fluid.
+Any change to model paths, startup flow, required checkpoints, device behavior, or mounted routes must be reflected in:
 
-## 2. The Performance Guard 🚀
-Apple Silicon performance is fragile.
-- **Protocol**: Call `torch.mps.empty_cache()` and `torch.mps.synchronize()` before every generation.
-- **Consistency**: The shipped standalone build is `High Quality` only. If latency or memory behavior drifts, audit scheduler selection, model paths, and GPU memory fragmentation before adding new speed modes.
+- `README.md`
+- path helpers such as `model_paths.py`
+- installer or audit scripts when the change affects provisioning
 
-## 3. Structural Integrity 🏛️
-Complexity must be earned, not assumed.
-- **Lesson of the Industrial Era**: Rapidly switching to multi-file architectures or complex web frameworks (FastAPI) before the baseline is fully stable leads to "Industrial Bloat" and unpredictable regressions.
-- **Protocol**: Maintain the single-file `app.py` focus for core logic. Only move to a multi-page structure once the feature is 100% verified in the baseline.
+If the docs and runtime disagree, the runtime contract is considered broken until both are reconciled.
 
-## 4. Documentation as Code 📖
-If it isn't documented, it doesn't exist.
-- **Protocol**: Any runtime contract change (device selection, offline model paths, scheduler switching, optional feature removal) must be mirrored in the `README.md` and feature-mapped in the code comments.
+## 2. Shared Model Vault Is Canonical
 
----
-*If any change breaks these rules, it must be rolled back. There is no compromise on the Golden Standard.* 🛡️🎴
+The app is built around a centralized model store, not per-project checkpoints.
+
+Rules:
+
+- default model root is `/Users/Shared/Models`
+- override with `TRYON_MODELS_ROOT`
+- app settings do not belong in the model vault
+- new model families must land in the shared vault under a stable namespace
+- update the audit tooling and manifest expectations when the vault layout changes
+
+## 3. Shipped Surface Must Stay Explicit
+
+The root documentation should describe only what this repository actually ships:
+
+- landing page
+- try-on
+- face swap
+- hold product
+- image to video
+- garment setup and library
+- public API endpoints
+
+Do not paste large upstream readmes into the root app documentation. Link to upstream instead.
+
+## 4. Launcher Output Should Stay Useful
+
+The current launcher filters a few known noisy lines for readability. That is an implementation detail, not a license to hide failures.
+
+Rules:
+
+- known startup noise may be filtered in `run.sh`
+- real errors should be fixed at the source when practical
+- do not rely on shell filtering to conceal broken behavior
+
+## 5. Quality Mode Is the Baseline
+
+This standalone build ships one supported try-on quality lane:
+
+- `High Quality`
+
+`Fast (Draft)` is not part of the supported product. If a speed mode is reintroduced, it must be documented as a shipped feature and validated against the current baseline.
+
+## 6. Optional Features Must Declare Their Dependencies
+
+Some pages rely on models outside the minimal installer seed set.
+
+When adding or changing optional features:
+
+- document whether the installer pre-seeds the models
+- document whether first-use downloads are expected
+- document which shared-vault directories must already exist
+
+## 7. Keep the App-Centric Architecture Understandable
+
+The repo is already a single-application stack with Gradio mounted into FastAPI. Keep the architecture legible.
+
+Rules:
+
+- avoid introducing new subsystems without documenting the resulting surface area
+- prefer explicit route and storage contracts
+- keep high-value operational behavior easy to trace from the root docs

@@ -1,285 +1,372 @@
-# Try-On
+# Try-On Studio
 
-<div style="display: flex; justify-content: center; align-items: center;">
-  <a href="http://arxiv.org/abs/2407.15886" style="margin: 0 2px;">
-    <img src='https://img.shields.io/badge/arXiv-2407.15886-red?style=flat&logo=arXiv&logoColor=red' alt='arxiv'>
-  </a>
-  <a href='https://huggingface.co/zhengchong/CatVTON' style="margin: 0 2px;">
-    <img src='https://img.shields.io/badge/Hugging Face-ckpts-orange?style=flat&logo=HuggingFace&logoColor=orange' alt='huggingface'>
-  </a>
-  <a href="https://github.com/Zheng-Chong/CatVTON" style="margin: 0 2px;">
-    <img src='https://img.shields.io/badge/GitHub-Repo-blue?style=flat&logo=GitHub' alt='GitHub'>
-  </a>
-  <a href="http://120.76.142.206:8888" style="margin: 0 2px;">
-    <img src='https://img.shields.io/badge/Demo-Gradio-gold?style=flat&logo=Gradio&logoColor=red' alt='Demo'>
-  </a>
-  <a href="https://huggingface.co/spaces/zhengchong/CatVTON" style="margin: 0 2px;">
-    <img src='https://img.shields.io/badge/Space-ZeroGPU-orange?style=flat&logo=Gradio&logoColor=red' alt='Demo'>
-  </a>
-  <a href='https://zheng-chong.github.io/CatVTON/' style="margin: 0 2px;">
-    <img src='https://img.shields.io/badge/Webpage-Project-silver?style=flat&logo=&logoColor=orange' alt='webpage'>
-  </a>
-  <a href="https://github.com/Zheng-Chong/CatVTON/LICENCE" style="margin: 0 2px;">
-    <img src='https://img.shields.io/badge/License-CC BY--NC--SA--4.0-lightgreen?style=flat&logo=Lisence' alt='License'>
-  </a>
-</div>
+Standalone local try-on, face swap, hold-product, and image-to-video app built on top of CatVTON, Diffusers, and a shared local model vault.
 
-**Standalone Offline App | High-Quality Rendering | Live Studio Tools | Scientific Spatial Constraints**
+This repository is the installable application layer. It is not a generic CatVTON training repo and it does not expose the full upstream workflow surface.
 
-This repository ships a standalone offline virtual try-on app built on top of CatVTON. The current supported delivery is the stable high-quality rendering path plus the local garment studio and package export tooling.
+## What Ships
 
-The runtime is optimized first for Apple Silicon (`mps`) and can also select `cuda` or `cpu` automatically when available. Offline dependencies are downloaded by the installer into a centralized model hub so a fresh machine can be provisioned without manual checkpoint hunting.
+The current app serves these pages from `http://127.0.0.1:7860`:
 
-## 🏛️ The Centralized Neural Hub Architecture
+- `/` landing page
+- `/try-on` main virtual try-on UI
+- `/face-swap` standalone face swap UI
+- `/hold-product` pose-guided product placement UI
+- `/image-to-video` Stable Video Diffusion UI
+- `/set-garment` garment setup studio
+- `/garments` local garment library
 
-To prevent duplicate 10GB+ neural network downloads across different AI projects, **this repository enforces a Centralized Neural Hub**.
+The current API surface is:
 
-By default, the engine stores all AI models under:
-📁 **`/Users/Shared/Models/`**
+- `POST /api/tryon/run`
+- `POST /api/image-to-video/run`
+- `POST /upload_garment`
+- `POST /save_package`
 
-You can override that location on a new machine without editing source code:
+## Runtime Summary
+
+Core runtime:
+
+- Python 3.11
+- Gradio mounted into FastAPI
+- PyTorch with automatic device selection: `cuda`, `mps`, then `cpu`
+- CatVTON for try-on
+- DensePose + SCHP for body parsing
+- Stable Diffusion 1.5 inpainting for the main try-on and hold-product pipelines
+- GFPGAN for optional face restoration
+- InsightFace InSwapper for primary face swap
+- Stable Video Diffusion for image-to-video
+
+Shared model root:
+
+- Default: `/Users/Shared/Models`
+- Override with `TRYON_MODELS_ROOT`
+
+App settings path:
+
+- `/Users/Shared/Projects/try-on/.config/settings.json`
+
+Legacy model-vault settings files are migrated forward automatically on startup.
+
+## Quick Start
+
+Install:
 
 ```bash
-export TRYON_MODELS_ROOT=/your/shared/models/path
+chmod +x install.sh run.sh
+./install.sh
 ```
 
-The installer and runtime both honor `TRYON_MODELS_ROOT`.
+Run:
 
----
-
-## 🚀 How to Use (Quick Start)
-
-1. **Initialize Engine**: Run the installer to prepare your environment and verify neural weights. The script will automatically construct the Centralized Hub and use `huggingface-cli` to securely download the hundreds of megabytes of required weights directly into it.
-   ```bash
-   chmod +x install.sh run.sh
-   ./install.sh
-   ```
-2. **Launch Studio**:
-   ```bash
-   ./run.sh
-   ```
-3. **Open the app**:
-   - `http://127.0.0.1:7860/try-on/` for the standalone try-on UI
-   - `http://127.0.0.1:7860/set-garment` for garment package setup
-   - `http://127.0.0.1:7860/garments` for the local garment library
-
-### 📸 Our First Try-On
-<div align="center">
-  <img src="images/our_first_tryon.png" alt="First Try-On" width="600">
-</div>
-
-### 📸 Sample Gallery
-
-<div style="display: flex; justify-content: center; align-items: center; gap: 10px;">
-  <div align="center">
-    <b>Perfect Racing Suit Alignment</b><br>
-    <i>(TPS Warp + Cut Constraints)</i><br>
-    <img src="images/test_leather_suit.png" alt="Leather Racing Suit Try-On" width="400">
-  </div>
-  <div align="center">
-    <b>Everyday Wear</b><br>
-    <i>(Casual Try-On)</i><br>
-    <img src="images/test_theroad_girl.png" alt="Casual Try-On" width="400">
-  </div>
-</div>
-
-*The custom TPS Warp mathematically anchors logos to the generated body geometry, completely preserving them from Latent Diffusion destruction. The 'shorts' length constraint was engaged to perfectly map the pants.*
-
-**Original Assets for Testing:**
-* **Original Garment:** `images/garment_example.png`
-* **Original Person:** `images/person_example.png`
-
----
-
-## 🛠️ Standalone Build Status
-- **Supported mode**: `High Quality` rendering is the shipped standalone path.
-- **Removed mode**: `Fast Draft` / LCM LoRA is intentionally not part of the standalone build because it was not reliable enough for installable offline delivery.
-- **Offline install contract**: `install.sh` downloads the runtime dependencies the app actually expects, including SD inpainting, VAE, segmentation assets, and GFPGAN weights.
-- **Studio package tooling**: `/set-garment` exports package metadata and garment assets locally for future production wiring.
-
-### 💎 V3.0 Pro Features
-- **Surgical Head Paste**: Extracts your exact face, hair, and sunglasses from the original photo and alpha-blends it pixel-perfectly onto the final AI generation. 100% molecular originality guaranteed.
-- **Offline startup contract**: The app now validates required local checkpoints up front instead of silently degrading at runtime.
-- **Deep Clean Plate**: A true green-screen mode. Automatically calculates the silhouette of your entire body *after* generation to securely isolate the Try-On from your provided untouched background without clipping.
-- **Mask Dilation Engine**: Custom padding parameters (-10 to +30) to surgically expand AI rendering zones and completely eradicate original clothing "ghosting."
-- **Fractional Face Restoration**: Variable GFPGAN slider allowing you to seamlessly mix your original skin pores and freckles alongside AI face-symmetry enhancements.
-- **Karras Optimization**: The backend now natively overrides standard rendering by substituting `DPM++ 2M Karras` to maximize micro-texture clarity at 30+ steps.
-
----
-
-## 🧬 Scientific Background: How We Fixed Virtual Try-On
-
-Standard zero-shot image-conditioned diffusion networks (like CatVTON or OOTDiffusion) suffer from massive mathematical flaws. This repository fixes them using post-process Computer Vision and Spatial Hacks.
-
-### 1. The "Cape" Artifact Fix (DensePose Hacking)
-**The Problem:** Neural engines calculate a "Convex Hull" (a rubber band stretched around your body). If your arms are raised, the hull creates massive empty white triangles between your arms and torso. The AI fills this empty space with hallucinated fabric, creating weird "capes".
-**Our Solution:** We hacked the core `cloth_masker.py` to completely eradicate the Convex Hull logic. The engine now strictly enforces **Body-Hugging DensePose Arrays**, physically banning the AI from generating fabric in the empty air between limbs.
-
-### 2. Garment Cut Constraints (Spatial Limitations)
-**The Problem:** Image-conditioned AI cannot read text prompts (e.g., you cannot type "tank top" to force it to remove sleeves).
-**Our Solution:** We intercept the neural DensePose map *before* generation. If you select "Sleeveless" in our UI, the backend mathematically deletes the `big arms` and `forearms` data arrays from the canvas. The AI is physically blocked from drawing sleeves.
-
-### 3. Deep Logo & Texture Restoration (TPS Warp)
-**The Problem:** Latent Diffusion auto-encoders inherently destroy high-frequency text, logos, and sharp graphics.
-**Our Solution:** We built a custom **Thin-Plate Spline (TPS) Warp Engine** powered by OpenCV. 
-1. It mathematically anchors 50+ spatial geometry points on your generated torso.
-2. It warps the *original, high-res* flat garment onto the 3D curves of the generated body.
-3. It performs a High-Pass Frequency Separation, blending the sharp 4K graphics of the original image with the 3D lighting/shadows of the AI generation.
-
----
-*Architected and developed with 🛡️ by Antigravity*
----
-
-## Legacy Upstream Reference
-
-The remaining sections below are preserved from the upstream CatVTON project as reference material for the base model, research background, and original training/inference workflows. They are **not** the install or runtime contract for this standalone repository.
-
-
-
-**CatVTON** is a simple and efficient virtual try-on diffusion model with ***1) Lightweight Network (899.06M parameters totally)***, ***2) Parameter-Efficient Training (49.57M parameters trainable)*** and ***3) Simplified Inference (< 8G VRAM for 1024X768 resolution)***.
-<div align="center">
-  <img src="https://raw.githubusercontent.com/Zheng-Chong/CatVTON/main/resource/img/teaser.jpg" width="85%" height="100%"/>
-</div>
-
-
-
-
-## Updates
-- **`2024/08/10`**: Our 🤗 [**HuggingFace Space**](https://huggingface.co/spaces/zhengchong/CatVTON) is available now! Thanks for the grant from [**ZeroGPU**](https://huggingface.co/zero-gpu-explorers)！
-- **`2024/08/09`**: [**Evaluation code**](https://github.com/Zheng-Chong/CatVTON?tab=readme-ov-file#3-calculate-metrics) is provided to calculate metrics 📚.
-- **`2024/07/27`**: We provide code and workflow for deploying CatVTON on [**ComfyUI**](https://github.com/Zheng-Chong/CatVTON?tab=readme-ov-file#comfyui-workflow) 💥.
-- **`2024/07/24`**: Our [**Paper on ArXiv**](http://arxiv.org/abs/2407.15886) is available 🥳!
-- **`2024/07/22`**: Our [**App Code**](https://github.com/Zheng-Chong/CatVTON/blob/main/app.py) is released, deploy and enjoy CatVTON on your mechine 🎉!
-- **`2024/07/21`**: Our [**Inference Code**](https://github.com/Zheng-Chong/CatVTON/blob/main/inference.py) and [**Weights** 🤗](https://huggingface.co/zhengchong/CatVTON) are released.
-- **`2024/07/11`**: Our [**Online Demo**](http://120.76.142.206:8888) is released 😁.
-
-
-
-
-## Installation
-An [Installation Guide](https://github.com/Zheng-Chong/CatVTON/blob/main/INSTALL.md) is provided to help build the conda environment for CatVTON. When deploying the app, you will need Detectron2 & DensePose, which are not required for inference on datasets. Install the packages according to your needs.
-
-## Deployment 
-### ComfyUI Workflow
-We have modified the main code to enable easy deployment of CatVTON on [ComfyUI](https://github.com/comfyanonymous/ComfyUI). Due to the incompatibility of the code structure, we have released this part in the [Releases](https://github.com/Zheng-Chong/CatVTON/releases/tag/ComfyUI), which includes the code placed under `custom_nodes` of ComfyUI and our workflow JSON files.
-
-To deploy CatVTON to your ComfyUI, follow these steps:
-1. Install all the requirements for both CatVTON and ComfyUI, refer to [Installation Guide for CatVTON](https://github.com/Zheng-Chong/CatVTON/blob/main/INSTALL.md) and [Installation Guide for ComfyUI](https://github.com/comfyanonymous/ComfyUI?tab=readme-ov-file#installing).
-2. Download [`ComfyUI-CatVTON.zip`](https://github.com/Zheng-Chong/CatVTON/releases/download/ComfyUI/ComfyUI-CatVTON.zip) and unzip it in the `custom_nodes` folder under your ComfyUI project (clone from [ComfyUI](https://github.com/comfyanonymous/ComfyUI)).
-3. Run the ComfyUI.
-4. Download [`catvton_workflow.json`](https://github.com/Zheng-Chong/CatVTON/releases/download/ComfyUI/catvton_workflow.json) and drag it into you ComfyUI webpage and enjoy 😆!
-
-> Problems under Windows OS, please refer to [issue#8](https://github.com/Zheng-Chong/CatVTON/issues/8).
-> 
-When you run the CatVTON workflow for the first time, the weight files will be automatically downloaded, usually taking dozens of minutes.
-
-<div align="center">
-  <img src="https://raw.githubusercontent.com/Zheng-Chong/CatVTON/main/resource/img/comfyui-1.png" width="100%" height="100%"/>
-</div>
-
-<!-- <div align="center">
- <img src="https://raw.githubusercontent.com/Zheng-Chong/CatVTON/main/resource/img/comfyui.png" width="100%" height="100%"/>
-</div> -->
-
-### Gradio App
-
-To deploy the Gradio App for CatVTON on your machine, run the following command, and checkpoints will be automatically downloaded from HuggingFace.
-
-```PowerShell
-CUDA_VISIBLE_DEVICES=0 python app.py \
---output_dir="resource/demo/output" \
---mixed_precision="bf16" \
---allow_tf32 
-```
-When using `bf16` precision, generating results with a resolution of `1024x768` only requires about `8G` VRAM.
-
-## Inference
-### 1. Data Preparation
-Before inference, you need to download the [VITON-HD](https://github.com/shadow2496/VITON-HD) or [DressCode](https://github.com/aimagelab/dress-code) dataset.
-Once the datasets are downloaded, the folder structures should look like these:
-```
-├── VITON-HD
-|   ├── test_pairs_unpaired.txt
-│   ├── test
-|   |   ├── image
-│   │   │   ├── [000006_00.jpg | 000008_00.jpg | ...]
-│   │   ├── cloth
-│   │   │   ├── [000006_00.jpg | 000008_00.jpg | ...]
-│   │   ├── agnostic-mask
-│   │   │   ├── [000006_00_mask.png | 000008_00.png | ...]
-...
+```bash
+./run.sh
 ```
 
-```
-├── DressCode
-|   ├── test_pairs_paired.txt
-|   ├── test_pairs_unpaired.txt
-│   ├── [dresses | lower_body | upper_body]
-|   |   ├── test_pairs_paired.txt
-|   |   ├── test_pairs_unpaired.txt
-│   │   ├── images
-│   │   │   ├── [013563_0.jpg | 013563_1.jpg | 013564_0.jpg | 013564_1.jpg | ...]
-│   │   ├── agnostic_masks
-│   │   │   ├── [013563_0.png| 013564_0.png | ...]
-...
-```
-For the DressCode dataset, we provide script to preprocessed agnostic masks, run the following command:
-```PowerShell
-CUDA_VISIBLE_DEVICES=0 python preprocess_agnostic_mask.py \
---data_root_path <your_path_to_DressCode> 
-```
+Open:
 
-### 2. Inference on VTIONHD/DressCode
-To run the inference on the DressCode or VITON-HD dataset, run the following command, checkpoints will be automatically downloaded from HuggingFace.
+- [Landing](http://127.0.0.1:7860/)
+- [Try-On](http://127.0.0.1:7860/try-on/)
+- [Face Swap](http://127.0.0.1:7860/face-swap/)
+- [Hold Product](http://127.0.0.1:7860/hold-product/)
+- [Image to Video](http://127.0.0.1:7860/image-to-video/)
+- [Setup Garment](http://127.0.0.1:7860/set-garment)
+- [Garment Library](http://127.0.0.1:7860/garments)
 
-```PowerShell
-CUDA_VISIBLE_DEVICES=0 python inference.py \
---dataset [dresscode | vitonhd] \
---data_root_path <path> \
---output_dir <path> 
---dataloader_num_workers 8 \
---batch_size 8 \
---seed 555 \
---mixed_precision [no | fp16 | bf16] \
---allow_tf32 \
---repaint \
---eval_pair  
-```
-### 3. Calculate Metrics
+## Model Vault Contract
 
-After obtaining the inference results, calculate the metrics using the following command: 
+This app is designed to reuse a centralized shared model store instead of keeping project-local checkpoints.
 
-```PowerShell
-CUDA_VISIBLE_DEVICES=0 python eval.py \
---gt_folder <your_path_to_gt_image_folder> \
---pred_folder <your_path_to_predicted_image_folder> \
---paired \
---batch_size=16 \
---num_workers=16 
+Default root:
+
+```text
+/Users/Shared/Models
 ```
 
--  `--gt_folder` and `--pred_folder` should be folders that contain **only images**.
-- To evaluate the results in a paired setting, use `--paired`; for an unpaired setting, simply omit it.
-- `--batch_size` and `--num_workers` should be adjusted based on your machine.
+Current canonical layout:
 
+```text
+/Users/Shared/Models
+  /.cache/huggingface
+  /checkpoints
+    /sd15-inpainting
+    /stable-video-diffusion-img2vid-xt
+    /try-on
+  /vae
+    /sd15-vae-ft-mse
+  /processors
+    /catvton-segmentation
+    /annotators
+    /face-restoration
+    /upscalers
+  /controlnet
+    /sd15-openpose
+  /analysis
+    /insightface
+  /adapters
+  /loras
+  /llms
+  /manifest.json
+```
 
-## Acknowledgement
-Our code is modified based on [Diffusers](https://github.com/huggingface/diffusers). We adopt [Stable Diffusion v1.5 inpainting](https://huggingface.co/runwayml/stable-diffusion-inpainting) as the base model. We use [SCHP](https://github.com/GoGoDuck912/Self-Correction-Human-Parsing/tree/master) and [DensePose](https://github.com/facebookresearch/DensePose) to automatically generate masks in our [Gradio](https://github.com/gradio-app/gradio) App and [ComfyUI](https://github.com/comfyanonymous/ComfyUI) workflow. Thanks to all the contributors!
+Audit the shared vault and refresh the manifest:
 
-## License
-All the materials, including code, checkpoints, and demo, are made available under the [Creative Commons BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/) license. You are free to copy, redistribute, remix, transform, and build upon the project for non-commercial purposes, as long as you give appropriate credit and distribute your contributions under the same license.
+```bash
+python scripts/audit_models.py --write-manifest
+```
 
+## What `install.sh` Seeds
 
-## Citation
+`install.sh` provisions the Python environment and downloads the core offline try-on stack:
 
-```bibtex
-@misc{chong2024catvtonconcatenationneedvirtual,
- title={CatVTON: Concatenation Is All You Need for Virtual Try-On with Diffusion Models}, 
- author={Zheng Chong and Xiao Dong and Haoxiang Li and Shiyue Zhang and Wenqing Zhang and Xujie Zhang and Hanqing Zhao and Xiaodan Liang},
- year={2024},
- eprint={2407.15886},
- archivePrefix={arXiv},
- primaryClass={cs.CV},
- url={https://arxiv.org/abs/2407.15886}, 
+- `processors/catvton-segmentation`
+- `checkpoints/sd15-inpainting`
+- `vae/sd15-vae-ft-mse`
+- `processors/face-restoration/GFPGANv1.4.pth`
+- GFPGAN support weights used by the local runtime
+
+It does not currently pre-seed every optional feature dependency.
+
+Optional or first-use dependencies:
+
+- `checkpoints/stable-video-diffusion-img2vid-xt`
+  - downloaded on first use by the image-to-video page
+- `analysis/insightface`
+  - InsightFace may download model assets on first use if they are not already present
+- `controlnet/sd15-openpose`
+- `processors/annotators`
+  - required by the hold-product pipeline; expected to already exist in the shared model vault
+
+If you want a fully pre-seeded offline machine, populate those optional directories before relying on those pages.
+
+## Shipped Features
+
+### Try-On
+
+Main page: `/try-on`
+
+Supported controls:
+
+- garment category
+- sleeve and pant cut constraints
+- steps, guidance, mask sharpness, mask padding
+- detail boost
+- clean plate compositing
+- seed locking
+- HF fine-tuned VAE toggle
+- sampler choice: `Euler A`, `DPM++ 2M`, `UniPC`
+- optional GFPGAN face restoration
+- optional preserved-head literal paste
+- optional face swap during try-on
+- optional deep texture restoration using `warp_repair.py`
+
+Important behavior:
+
+- shipped resolution mode is `High Quality` only
+- `Fast (Draft)` is disabled
+- the wrapper enforces a stronger baseline for high-quality runs
+- the app starts serving before model warmup completes; generation is blocked until the loader is ready
+
+### Face Swap
+
+Standalone page: `/face-swap`
+
+Primary path:
+
+- InsightFace InSwapper with CoreML or CPU providers
+
+Fallback path:
+
+- if InsightFace cannot detect a target face, the app falls back to the geometric composite path used by the try-on pipeline
+
+Controls:
+
+- sports portrait mode
+- include hair / hat / glasses
+- blend strength
+- optional debug mask output
+
+### Hold Product
+
+Standalone page: `/hold-product`
+
+This is a pose-guided local product-placement workflow that combines:
+
+- editable upper-body pose rig
+- optional pose-image override
+- OpenPose annotators
+- ControlNet OpenPose
+- SD15 inpainting
+
+Controls:
+
+- built-in pose templates
+- hold mode: `Overhead Trophy` or `Front Hold`
+- custom prompt override
+- position offsets and scale multiplier
+- background removal and edge softness
+- preserve product detail
+- debug pose map and inpaint mask
+
+### Image to Video
+
+Standalone page: `/image-to-video`
+
+Backend:
+
+- `stabilityai/stable-video-diffusion-img2vid-xt`
+
+Controls:
+
+- motion preset
+- frame count
+- inference steps
+- FPS
+- motion strength
+- creative drift
+- min/max guidance
+- seed
+
+Outputs:
+
+- rendered MP4
+- preview frame
+
+Generated videos are saved under:
+
+```text
+outputs/image_to_video
+```
+
+### Garment Studio
+
+Pages:
+
+- `/set-garment`
+- `/garments`
+
+Storage under:
+
+```text
+studio_tools/packages
+studio_tools/uploads
+studio_tools/master_maps
+```
+
+The package API now uses safer path handling and writes:
+
+- `metadata.json`
+- `package.json`
+- `garment.png`
+
+inside each package folder.
+
+## API
+
+### `POST /api/tryon/run`
+
+Runs the try-on pipeline and saves the output to a path you provide.
+
+Required fields:
+
+- `person_image_path`
+- `output_image_path`
+
+Conditionally required:
+
+- `garment_image_path` unless `face_swap_only=true`
+- `face_image_path` when `enable_face_swap=true`
+
+Example:
+
+```json
+{
+  "person_image_path": "/abs/path/person.png",
+  "garment_image_path": "/abs/path/garment.png",
+  "output_image_path": "/abs/path/result.png",
+  "category": "Upper (T-Shirts, Hoodies)",
+  "steps": 24,
+  "guidance": 3.5,
+  "seed": 42,
+  "enable_face_swap": false,
+  "use_vae_hf": true,
+  "sampler_name": "Euler A"
 }
 ```
+
+Response:
+
+```json
+{
+  "status": "succeeded",
+  "output_image_path": "/abs/path/result.png",
+  "message": "ok"
+}
+```
+
+If `show_mask=true`, the API also writes and returns a sibling mask image path.
+
+### `POST /api/image-to-video/run`
+
+Required fields:
+
+- `source_image_path`
+- `output_video_path`
+
+Example:
+
+```json
+{
+  "source_image_path": "/abs/path/source.png",
+  "output_video_path": "/abs/path/output.mp4",
+  "num_frames": 14,
+  "num_inference_steps": 20,
+  "fps": 7,
+  "motion_bucket_id": 140,
+  "noise_aug_strength": 0.05,
+  "min_guidance_scale": 1.0,
+  "max_guidance_scale": 3.0,
+  "seed": 42
+}
+```
+
+### `POST /upload_garment`
+
+Uploads a garment image into `studio_tools/uploads`.
+
+### `POST /save_package`
+
+Writes a sanitized package folder under `studio_tools/packages`.
+
+## Repo Map
+
+High-value application files:
+
+- [app.py](/Users/Shared/Projects/try-on/app.py:1) main runtime, routes, UI, and API
+- [image_to_video_page.py](/Users/Shared/Projects/try-on/image_to_video_page.py:1) Stable Video Diffusion page and API helper
+- [install.sh](/Users/Shared/Projects/try-on/install.sh:1) environment and core-model installer
+- [run.sh](/Users/Shared/Projects/try-on/run.sh:1) local launcher
+- [model_paths.py](/Users/Shared/Projects/try-on/model_paths.py:1) shared path and settings helpers
+- [scripts/audit_models.py](/Users/Shared/Projects/try-on/scripts/audit_models.py:1) shared-vault audit and manifest generator
+- [warp_repair.py](/Users/Shared/Projects/try-on/warp_repair.py:1) texture/logo restoration pass
+- [studio_tools/generate_master_map.py](/Users/Shared/Projects/try-on/studio_tools/generate_master_map.py:1) DensePose master-map generation
+
+## Known Limits
+
+- The app is local-first, not stateless or multi-user.
+- Some optional pages depend on models not installed by `install.sh`.
+- `Hold Product` depends on the shared vault having working OpenPose annotators and ControlNet assets.
+- `Image to Video` downloads SVD on first use if it is missing.
+- The runtime is optimized around Apple Silicon and local desktop use, not cloud deployment.
+
+## Upstream Reference
+
+This app vendors and adapts CatVTON components, but the root README now documents only the standalone application in this repository.
+
+Upstream CatVTON references:
+
+- [CatVTON repo](https://github.com/Zheng-Chong/CatVTON)
+- [CatVTON paper](https://arxiv.org/abs/2407.15886)
+- [CatVTON Hugging Face](https://huggingface.co/zhengchong/CatVTON)
+
+Vendored upstream docs under `vendor/` are preserved as third-party reference material and are not the runtime contract for this app.

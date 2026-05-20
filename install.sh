@@ -2,12 +2,11 @@
 
 set -euo pipefail
 
-# 👕 Local Virtual Try-On - Standard Installer
-# Ensures the local environment and offline model cache match the runtime contract.
+# Installs the local Python environment and seeds the core shared-model dependencies.
 
 cd "$(dirname "$0")"
 
-echo "🛡️ Starting Golden Standard Installation..."
+echo "[try-on] Starting installation..."
 
 MODELS_ROOT="${TRYON_MODELS_ROOT:-/Users/Shared/Models}"
 VENV_DIR=".venv311"
