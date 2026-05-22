@@ -5,8 +5,14 @@ import argparse
 import json
 import os
 import shutil
+import sys
 from pathlib import Path
 
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from services.capabilities import build_capability_report
 
 DEFAULT_MODELS_ROOT = Path("/Users/Shared/Models")
 
@@ -34,32 +40,22 @@ def get_size_bytes(path: Path) -> int:
 
 
 def build_manifest(models_root: Path) -> dict:
+    capability_report = build_capability_report(models_root)
     entries = []
-    for child in sorted(models_root.iterdir(), key=lambda p: p.name.lower()):
-        entries.append(
-            {
-                "name": child.name,
-                "path": str(child),
-                "type": "symlink" if child.is_symlink() else "dir" if child.is_dir() else "file",
-                "size_bytes": get_size_bytes(child),
-            }
-        )
+    if models_root.exists():
+        for child in sorted(models_root.iterdir(), key=lambda p: p.name.lower()):
+            entries.append(
+                {
+                    "name": child.name,
+                    "path": str(child),
+                    "type": "symlink" if child.is_symlink() else "dir" if child.is_dir() else "file",
+                    "size_bytes": get_size_bytes(child),
+                }
+            )
 
-    required_paths = [
-        "checkpoints/sd15-inpainting",
-        "checkpoints/stable-video-diffusion-img2vid-xt",
-        "processors/catvton-segmentation",
-        "processors/face-restoration",
-        "vae/sd15-vae-ft-mse",
-    ]
-    return {
-        "models_root": str(models_root),
-        "entries": entries,
-        "required_status": {
-            rel: (models_root / rel).exists() for rel in required_paths
-        },
-        "warnings": collect_warnings(models_root),
-    }
+    capability_report["entries"] = entries
+    capability_report["warnings"] = collect_warnings(models_root)
+    return capability_report
 
 
 def collect_warnings(models_root: Path) -> list[str]:
