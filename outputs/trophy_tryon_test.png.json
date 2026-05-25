@@ -1,0 +1,63 @@
+{
+  "capabilities": {
+    "core_feature": true,
+    "key": "try_on",
+    "label": "Try-On",
+    "missing_optional_assets": [],
+    "missing_required_assets": [],
+    "notes": [],
+    "optional_assets": [
+      "gfpgan_face_restore"
+    ],
+    "required_assets": [
+      "catvton_densepose",
+      "catvton_schp",
+      "sd15_inpainting",
+      "sd15_vae"
+    ],
+    "status": "ready"
+  },
+  "extra": {
+    "mask_image_path": "/Users/Shared/Projects/try-on/outputs/trophy_tryon_test__mask.png"
+  },
+  "feature": "try_on",
+  "generated_at": "2026-05-22T10:41:42.087994+00:00",
+  "output_path": "/Users/Shared/Projects/try-on/outputs/trophy_tryon_test.png",
+  "parameters": {
+    "category": "Upper (T-Shirts, Hoodies)",
+    "composite_strength": 0.0,
+    "detail_boost": 0.4,
+    "enable_deep_texture": true,
+    "face_restore_strength": 0.0,
+    "garment_image_path": "/Users/Shared/Projects/try-on/images/test_leather_suit.png",
+    "guidance": 3.5,
+    "lock_seed": true,
+    "mask_padding": 6,
+    "mask_sharpness": 12,
+    "output_image_path": "/Users/Shared/Projects/try-on/outputs/trophy_tryon_test.png",
+    "pant_length": "default",
+    "person_image_path": "/Users/moldovancsaba/Desktop/psg_trophy.png",
+    "preserve_head": true,
+    "resolution": "High Quality",
+    "sampler_name": "Euler A",
+    "seed": 42,
+    "show_mask": true,
+    "sleeve_length": "default",
+    "steps": 20,
+    "use_vae_hf": true,
+    "warp_strength": 1.0
+  },
+  "quality_validation": {
+    "failures": [],
+    "feature": "try_on",
+    "metrics": {
+      "height": 1024,
+      "mask_coverage": 0.20245234171549478,
+      "mean_luma": 206.901611328125,
+      "std_luma": 65.3499755859375,
+      "width": 768
+    },
+    "passed": true,
+    "warnings": []
+  }
+}

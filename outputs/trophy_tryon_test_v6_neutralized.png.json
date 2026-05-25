@@ -1,0 +1,63 @@
+{
+  "capabilities": {
+    "core_feature": true,
+    "key": "try_on",
+    "label": "Try-On",
+    "missing_optional_assets": [],
+    "missing_required_assets": [],
+    "notes": [],
+    "optional_assets": [
+      "gfpgan_face_restore"
+    ],
+    "required_assets": [
+      "catvton_densepose",
+      "catvton_schp",
+      "sd15_inpainting",
+      "sd15_vae"
+    ],
+    "status": "ready"
+  },
+  "extra": {
+    "mask_image_path": "/Users/Shared/Projects/try-on/outputs/trophy_tryon_test_v6_neutralized__mask.png"
+  },
+  "feature": "try_on",
+  "generated_at": "2026-05-22T12:03:18.370715+00:00",
+  "output_path": "/Users/Shared/Projects/try-on/outputs/trophy_tryon_test_v6_neutralized.png",
+  "parameters": {
+    "category": "Full-Body (Suits, Dresses, Rompers)",
+    "composite_strength": 0.0,
+    "detail_boost": 0.2,
+    "enable_deep_texture": false,
+    "face_restore_strength": 0.0,
+    "garment_image_path": "/Users/Shared/Projects/try-on/images/test_leather_suit.png",
+    "guidance": 4.2,
+    "lock_seed": true,
+    "mask_padding": 10,
+    "mask_sharpness": 11,
+    "output_image_path": "/Users/Shared/Projects/try-on/outputs/trophy_tryon_test_v6_neutralized.png",
+    "pant_length": "default",
+    "person_image_path": "/Users/moldovancsaba/Desktop/psg_trophy.png",
+    "preserve_head": true,
+    "resolution": "High Quality",
+    "sampler_name": "DPM++ 2M",
+    "seed": 42,
+    "show_mask": true,
+    "sleeve_length": "default",
+    "steps": 30,
+    "use_vae_hf": true,
+    "warp_strength": 1.0
+  },
+  "quality_validation": {
+    "failures": [],
+    "feature": "try_on",
+    "metrics": {
+      "height": 1024,
+      "mask_coverage": 0.19207636515299478,
+      "mean_luma": 211.49342346191406,
+      "std_luma": 56.46641540527344,
+      "width": 768
+    },
+    "passed": true,
+    "warnings": []
+  }
+}

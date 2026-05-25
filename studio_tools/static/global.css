@@ -107,6 +107,16 @@ a {
     text-decoration: none;
 }
 
+a:focus-visible,
+button:focus-visible,
+.btn:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+    outline: 2px solid var(--color-accent-hi);
+    outline-offset: 2px;
+}
+
 
 /* ============================================================
    3. LAYOUT
@@ -150,6 +160,7 @@ a {
 
 .nav-links {
     display: flex;
+    flex-wrap: wrap;
     gap: var(--space-lg);
 }
 
@@ -388,10 +399,11 @@ canvas {
 }
 
 .hero-title {
-    font-size: var(--font-size-hero);
+    font-size: clamp(40px, 7vw, var(--font-size-hero));
     font-weight: 800;
     letter-spacing: -2px;
     line-height: 1.1;
+    max-width: 12ch;
 }
 
 .hero-title-accent {
@@ -407,10 +419,10 @@ canvas {
 
 .nav-cards {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
     gap: var(--space-lg);
     width: 100%;
-    max-width: 900px;
+    max-width: 1080px;
 }
 
 .nav-card {
@@ -424,6 +436,7 @@ canvas {
     flex-direction: column;
     gap: var(--space-sm);
     transition: border-color 0.2s ease, transform 0.2s ease;
+    min-height: 220px;
 }
 
 .nav-card:hover {
@@ -478,4 +491,57 @@ footer,
 .built-with-gradio,
 .svelte-1p9xomd {
     display: none !important;
+}
+
+/* ============================================================
+   15. RESPONSIVE BEHAVIOR
+   ============================================================ */
+
+@media (max-width: 900px) {
+    .navbar {
+        height: auto;
+        flex-wrap: wrap;
+        align-items: flex-start;
+        padding: var(--space-md);
+        gap: var(--space-md);
+    }
+
+    .nav-links {
+        width: 100%;
+        gap: var(--space-md);
+    }
+
+    .hero {
+        align-items: flex-start;
+        text-align: left;
+        min-height: auto;
+        padding: var(--space-xl) var(--space-md);
+    }
+
+    .hero-subtitle {
+        max-width: 60ch;
+    }
+}
+
+@media (max-width: 640px) {
+    .container {
+        margin: var(--space-lg) auto;
+    }
+
+    .nav-link {
+        font-size: var(--font-size-xs);
+    }
+
+    .hero {
+        gap: var(--space-lg);
+    }
+
+    .hero-title {
+        letter-spacing: -1px;
+    }
+
+    .nav-card {
+        min-height: unset;
+        padding: var(--space-lg);
+    }
 }

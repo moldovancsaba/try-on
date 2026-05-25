@@ -219,6 +219,38 @@ _GFPGAN_ERROR = None
 _READY   = threading.Event()
 _CAPABILITY_REPORT: dict[str, Any] | None = None
 
+_CATEGORY_UPPER = "Upper (T-Shirts, Hoodies)"
+_CATEGORY_LOWER = "Lower (Jeans, Shorts, Skirts)"
+_CATEGORY_FULL_BODY = "Full-Body (Suits, Dresses, Rompers)"
+_CATEGORY_OUTER = "Outerwear (Jackets, Coats)"
+_CATEGORY_CHOICES = [
+    _CATEGORY_UPPER,
+    _CATEGORY_LOWER,
+    _CATEGORY_FULL_BODY,
+    _CATEGORY_OUTER,
+]
+_CATEGORY_ALIASES = {
+    "upper": _CATEGORY_UPPER,
+    "lower": _CATEGORY_LOWER,
+    "dresses": _CATEGORY_FULL_BODY,
+    "overall": _CATEGORY_FULL_BODY,
+    "Dresses (Full-Body, Suits, Rompers)": _CATEGORY_FULL_BODY,
+    "Full-Body (Suits, Dresses, Rompers)": _CATEGORY_FULL_BODY,
+    "outer": _CATEGORY_OUTER,
+}
+_CATEGORY_TO_AUTOMASK = {
+    _CATEGORY_UPPER: "upper",
+    _CATEGORY_LOWER: "lower",
+    _CATEGORY_FULL_BODY: "overall",
+    _CATEGORY_OUTER: "outer",
+}
+
+
+def _normalize_category(value: str | None) -> str:
+    if not value:
+        return _CATEGORY_UPPER
+    return _CATEGORY_ALIASES.get(value, value if value in _CATEGORY_CHOICES else _CATEGORY_UPPER)
+
 
 def _build_identity_masks(mask_result: dict[str, Any], include_hair: bool = True) -> dict[str, Image.Image]:
     """
@@ -244,6 +276,49 @@ def _build_identity_masks(mask_result: dict[str, Any], include_hair: bool = True
     }
 
 
+def _build_full_body_edit_mask(
+    mask_result: dict[str, Any],
+    base_mask: Image.Image,
+    head_mask: Image.Image | None = None,
+) -> Image.Image:
+    """
+    Expand the editable region for full-body suits using SCHP parsing labels.
+    AutoMasker is conservative on raised-arm poses, which leaves original
+    jersey and shorts details visible. This unions the base mask with the
+    parsed clothing and leg regions, then removes the preserved head matte.
+    """
+    import numpy as np
+    from PIL import Image, ImageFilter
+
+    schp_lip = np.array(mask_result["schp_lip"], dtype=np.uint8)
+    base_arr = np.array(base_mask.convert("L"), dtype=np.uint8)
+
+    # LIP parsing labels:
+    # 5 upper-clothes, 6 dress, 7 coat, 8 socks, 9 pants,
+    # 10 jumpsuits, 11 scarf, 12 skirt, 16/17 legs, 18/19 shoes
+    full_body_labels = {5, 6, 7, 8, 9, 10, 11, 12, 16, 17, 18, 19}
+    clothing_arr = (np.isin(schp_lip, list(full_body_labels)).astype(np.uint8) * 255)
+    silhouette_arr = ((schp_lip > 0).astype(np.uint8) * 255)
+
+    merged_arr = np.maximum(base_arr, clothing_arr).astype(np.uint8)
+    merged_arr = np.where(silhouette_arr > 0, merged_arr, 0).astype(np.uint8)
+    merged = Image.fromarray(merged_arr, mode="L")
+
+    # Close small holes in the editable garment region without reopening the
+    # arm gap around held objects, because the silhouette clamp already keeps
+    # that gap outside the person parse.
+    merged = merged.filter(ImageFilter.MaxFilter(size=7))
+    merged = merged.filter(ImageFilter.MinFilter(size=7))
+
+    if head_mask is not None:
+        head_arr = np.array(head_mask.convert("L"), dtype=np.uint8)
+        merged_arr = np.array(merged, dtype=np.uint8)
+        merged_arr = np.where(head_arr > 0, 0, merged_arr).astype(np.uint8)
+        merged = Image.fromarray(merged_arr, mode="L")
+
+    return merged
+
+
 def _composite_generated_garment(
     source_person: Image.Image,
     generated_result: Image.Image,
@@ -263,6 +338,28 @@ def _composite_generated_garment(
     if feather_radius > 0:
         alpha = alpha.filter(ImageFilter.GaussianBlur(radius=feather_radius))
     return Image.composite(generated_result, src, alpha)
+
+
+def _prepare_diffusion_person(
+    source_person: Image.Image,
+    garment_mask: Image.Image,
+    category: str,
+) -> Image.Image:
+    """
+    Reduce source-garment branding bleed inside the editable region before
+    diffusion. Full-body suits are the hardest case because strong chest logos
+    and shorts details otherwise survive the inpaint too aggressively.
+    """
+    from PIL import Image, ImageFilter, ImageOps
+
+    if category != _CATEGORY_FULL_BODY:
+        return source_person
+
+    alpha = garment_mask.convert("L").filter(ImageFilter.GaussianBlur(radius=6))
+    blurred = source_person.filter(ImageFilter.GaussianBlur(radius=18))
+    neutral = ImageOps.grayscale(blurred).convert("RGB")
+    neutral = Image.blend(blurred, neutral, alpha=0.75)
+    return Image.composite(neutral, source_person, alpha)
 
 
 def _load_models():
@@ -384,6 +481,8 @@ def _inference(person_img, cloth_img, category, sleeve_length, pant_length, reso
         yield None, None, "Please upload a garment image.", gr.update(), gr.update()
         return
 
+    category = _normalize_category(category)
+
     # 💾 Save Last Settings
     try:
         settings = {
@@ -442,25 +541,23 @@ def _inference(person_img, cloth_img, category, sleeve_length, pant_length, reso
     progress(0, desc="Segmenting body...")
     
     # AutoMasker Mapping
-    category_map = {
-        "Upper (T-Shirts, Hoodies)": "upper",
-        "Lower (Jeans, Shorts, Skirts)": "lower",
-        "Dresses (Full-Body, Suits, Rompers)": "overall",
-        "Outerwear (Jackets, Coats)": "outer"
-    }
-    automask_category = category_map.get(category, "upper")
+    automask_category = _CATEGORY_TO_AUTOMASK.get(category, "upper")
     mask_result = _MASKER(person, automask_category, sleeve_length=sleeve_length, pant_length=pant_length)
     mask_pil = mask_result["mask"]
 
     # --- Identity Map Extraction ---
     import numpy as np
     schp_lip = np.array(mask_result["schp_lip"])
+    person_silhouette_mask = Image.fromarray(((schp_lip > 0).astype(np.uint8) * 255), mode="L")
     
     # Build the optional head mask used for source-image head recomposition.
     head_mask_pil = None
     if preserve_head:
         identity_masks = _build_identity_masks(mask_result, include_hair=True)
         head_mask_pil = identity_masks["head"]
+
+    if category == _CATEGORY_FULL_BODY:
+        mask_pil = _build_full_body_edit_mask(mask_result, mask_pil, head_mask=head_mask_pil)
     
     # Advanced Mask Padding (Expand/Erode Silhouette)
     from PIL import ImageFilter
@@ -468,6 +565,14 @@ def _inference(person_img, cloth_img, category, sleeve_length, pant_length, reso
         mask_pil = mask_pil.filter(ImageFilter.MaxFilter(size=int(mask_padding * 2 + 1)))
     elif mask_padding < 0:
         mask_pil = mask_pil.filter(ImageFilter.MinFilter(size=int(abs(mask_padding) * 2 + 1)))
+
+    # Constrain the garment mask to the parsed person silhouette so held
+    # objects and background gaps between limbs do not get pulled into the
+    # editable region by AutoMasker expansion.
+    mask_arr = np.array(mask_pil.convert("L"), dtype=np.uint8)
+    silhouette_arr = np.array(person_silhouette_mask, dtype=np.uint8)
+    mask_arr = np.where(silhouette_arr > 0, mask_arr, 0).astype(np.uint8)
+    mask_pil = Image.fromarray(mask_arr, mode="L")
 
     # Fix hem V-cut artefact: expand the mask 8px downward so the composite
     # does not clip the bottom edge of the garment into a V-shape.
@@ -486,6 +591,8 @@ def _inference(person_img, cloth_img, category, sleeve_length, pant_length, reso
         vae_scale_factor=8, do_normalize=False,
         do_binarize=True, do_convert_grayscale=True,
     ).blur(mask_pil, blur_factor=actual_blur)
+
+    diffusion_person = _prepare_diffusion_person(person, mask_pil, category)
     t_mask = time.monotonic() - t_start
     
     result_img = None
@@ -534,7 +641,7 @@ def _inference(person_img, cloth_img, category, sleeve_length, pant_length, reso
     try:
         # Decode intermediate latents for live preview only.
         for i, t, latents in _PIPE(
-            image=person,
+            image=diffusion_person,
             condition_image=cloth,
             mask=mask_pil,
             num_inference_steps=int(num_steps),
@@ -683,8 +790,16 @@ def load_settings():
     migrate_legacy_settings(app_root=_ROOT, models_root=_MODELS_ROOT)
     return load_saved_settings(app_root=_ROOT, models_root=_MODELS_ROOT)
 
-def build_ui():
+def build_ui(mode: str = "generic"):
     s = load_settings()
+    motogp_mode = mode == "motogp"
+    nav_active = "motogp" if motogp_mode else "try-on"
+    page_title = "MotoGP Leather Magic" if motogp_mode else "Lightweight Local Virtual Try-On"
+    page_subtitle = (
+        "Standardized A-pose workflow for full-body MotoGP leather suits."
+        if motogp_mode
+        else "Upload a person photo and garment to run the local try-on pipeline."
+    )
 
     def run_core_tryon(
         person_img,
@@ -711,6 +826,26 @@ def build_ui():
         warp_strength,
         progress=gr.Progress(),
     ):
+        if motogp_mode:
+            category = _CATEGORY_FULL_BODY
+            sleeve_length = "default"
+            pant_length = "default"
+            resolution = "High Quality"
+            steps = max(int(steps), 30)
+            guidance = max(float(guidance), 4.2)
+            mask_sharpness = max(int(mask_sharpness), 11)
+            mask_padding = max(int(mask_padding), 10)
+            detail_boost = min(float(detail_boost), 0.2)
+            face_restore_strength = 0.0
+            preserve_head = True
+            lock_seed = True
+            use_vae_hf = True
+            sampler_name = "DPM++ 2M"
+            bg_plate = None
+            composite_strength = 0.0
+            enable_deep_texture = False
+            warp_strength = 1.0
+
         yield from _inference(
             person_img,
             cloth_img,
@@ -737,95 +872,230 @@ def build_ui():
             progress=progress,
         )
 
-    with gr.Blocks(title="Try-On Local") as demo:
+    with gr.Blocks(title=page_title) as demo:
         gr.Markdown(render_capability_markdown(_get_capability_report(), feature_keys=("try_on",)))
-        gr.HTML(get_navbar("try-on"))
-        gr.Markdown("# Lightweight Local Virtual Try-On")
-        
+        gr.HTML(get_navbar(nav_active))
+        gr.Markdown(f"# {page_title}")
+        gr.Markdown(page_subtitle)
+
+        if motogp_mode:
+            gr.Markdown(
+                "\n".join(
+                    [
+                        "Use this mode when both inputs follow the standard MotoGP contract:",
+                        "- person photo is full-body, straight camera, neutral background, A-pose",
+                        "- garment image is a front-facing full-body leather suit",
+                        "- the workflow is locked to full-body suit presets",
+                    ]
+                )
+            )
+
         with gr.Row():
             with gr.Column():
-                person_in = gr.Image(label="Person Photo", type="numpy")
-                cloth_in  = gr.Image(label="Garment Image", type="numpy")
-                # Handle legacy config values gracefully to prevent Gradio warnings
-                legacy_map = {"upper": "Upper (T-Shirts, Hoodies)", "lower": "Lower (Jeans, Shorts, Skirts)", "dresses": "Dresses (Full-Body, Suits, Rompers)", "outer": "Outerwear (Jackets, Coats)"}
-                saved_cat = s.get("category", "Upper (T-Shirts, Hoodies)")
-                saved_cat = legacy_map.get(saved_cat, saved_cat)
-                
-                category  = gr.Dropdown([
-                    "Upper (T-Shirts, Hoodies)", 
-                    "Lower (Jeans, Shorts, Skirts)", 
-                    "Dresses (Full-Body, Suits, Rompers)", 
-                    "Outerwear (Jackets, Coats)"
-                ], value=saved_cat, label="Garment Category")
-                with gr.Accordion("Garment Cut Constraints (Optional)", open=False):
-                    sleeve_length = gr.Radio(["default", "short_sleeve", "sleeveless"], value=s.get("sleeve_length", "default"), label="Sleeve Length Limit")
-                    pant_length = gr.Radio(["default", "shorts"], value=s.get("pant_length", "default"), label="Pant Length Limit")
+                person_in = gr.Image(
+                    label="A-Pose Person Photo" if motogp_mode else "Person Photo",
+                    type="numpy",
+                )
+                cloth_in = gr.Image(
+                    label="MotoGP Leather Suit" if motogp_mode else "Garment Image",
+                    type="numpy",
+                )
+                saved_cat = _normalize_category(
+                    s.get("category", _CATEGORY_FULL_BODY if motogp_mode else _CATEGORY_UPPER)
+                )
+                category_choices = [_CATEGORY_FULL_BODY] if motogp_mode else _CATEGORY_CHOICES
+                category = gr.Dropdown(
+                    category_choices,
+                    value=_CATEGORY_FULL_BODY if motogp_mode else saved_cat,
+                    label="Garment Category",
+                    info=(
+                        "Locked to full-body leather suits in MotoGP mode."
+                        if motogp_mode
+                        else "Use Full-Body for leather suits, dresses, and rompers."
+                    ),
+                    interactive=not motogp_mode,
+                )
+                if not motogp_mode:
+                    with gr.Accordion("Garment Cut Constraints (Optional)", open=False):
+                        sleeve_length = gr.Radio(
+                            ["default", "short_sleeve", "sleeveless"],
+                            value=s.get("sleeve_length", "default"),
+                            label="Sleeve Length Limit",
+                        )
+                        pant_length = gr.Radio(
+                            ["default", "shorts"],
+                            value=s.get("pant_length", "default"),
+                            label="Pant Length Limit",
+                        )
+                else:
+                    sleeve_length = gr.State("default")
+                    pant_length = gr.State("default")
                 resolution = gr.Radio(["High Quality"], value="High Quality", label="Resolution")
-                bg_plate = gr.Image(label="Background Plate (Optional)", type="numpy")
+                if not motogp_mode:
+                    bg_plate = gr.Image(label="Background Plate (Optional)", type="numpy")
+                else:
+                    bg_plate = gr.State(None)
+
             with gr.Column():
                 with gr.Group():
-                    steps = gr.Slider(4, 50, value=s.get("steps", 20), step=1, label="Steps (Slide Right for Quality)")
-                    guidance = gr.Slider(1.0, 5.0, value=s.get("guidance", 3.5), step=0.1, label="Guidance (3.5 is Standard)")
-                    mask_sharpness = gr.Slider(0, 15, value=s.get("mask_sharpness", 12), step=1, label="Logo & Pattern Sharpness (Slide Right for Quality)")
-                    mask_padding = gr.Slider(-10, 30, value=s.get("mask_padding", 5), step=1, label="Mask Padding (Expand Silhouette)")
-                    detail_boost = gr.Slider(0.0, 1.0, value=s.get("detail_boost", 0.4), step=0.1, label="Logo/Pattern Detail Boost")
-                    composite_strength = gr.Slider(0.0, 1.0, value=s.get("composite_strength", 0.0), step=0.1, label="Clean Plate Blend (0 = OFF)")
+                    steps = gr.Slider(
+                        4,
+                        50,
+                        value=30 if motogp_mode else s.get("steps", 20),
+                        step=1,
+                        label="Steps",
+                        info="MotoGP mode enforces at least 30 steps." if motogp_mode else None,
+                    )
+                    guidance = gr.Slider(
+                        1.0,
+                        5.0,
+                        value=4.2 if motogp_mode else s.get("guidance", 3.5),
+                        step=0.1,
+                        label="Guidance",
+                    )
+                    mask_sharpness = gr.Slider(
+                        0,
+                        15,
+                        value=11 if motogp_mode else s.get("mask_sharpness", 12),
+                        step=1,
+                        label="Logo & Pattern Sharpness",
+                    )
+                    mask_padding = gr.Slider(
+                        -10,
+                        30,
+                        value=10 if motogp_mode else s.get("mask_padding", 5),
+                        step=1,
+                        label="Mask Padding",
+                    )
+                    detail_boost = gr.Slider(
+                        0.0,
+                        1.0,
+                        value=0.2 if motogp_mode else s.get("detail_boost", 0.4),
+                        step=0.1,
+                        label="Logo/Pattern Detail Boost",
+                    )
+                    if not motogp_mode:
+                        composite_strength = gr.Slider(
+                            0.0,
+                            1.0,
+                            value=s.get("composite_strength", 0.0),
+                            step=0.1,
+                            label="Clean Plate Blend (0 = OFF)",
+                        )
+                    else:
+                        composite_strength = gr.State(0.0)
 
-                    
                 with gr.Row():
                     seed = gr.Number(value=s.get("seed", 42), label="Seed", precision=0, scale=4, container=False)
-                    btn_42   = gr.Button("42", size="sm", min_width=60, scale=0)
+                    btn_42 = gr.Button("42", size="sm", min_width=60, scale=0)
                     btn_1337 = gr.Button("1337", size="sm", min_width=60, scale=0)
-                    lock_seed = gr.Checkbox(label="🔒 Lock", value=s.get("lock_seed", False), scale=0, container=False)
-                
-                with gr.Accordion("Options", open=True):
-                    preserve_head = gr.Checkbox(label="Preserve Original Head ♥️ (Literal Pixel Paste)", value=s.get("preserve_head", True))
-                    use_vae_hf = gr.Checkbox(label="High-Fidelity VAE (ft-mse)", value=s.get("use_vae_hf", True))
-                    face_restore_strength = gr.Slider(0.0, 1.0, value=s.get("face_restore_strength", 1.0), step=0.1, label="Face Restore Blend (GFPGAN)")
-                    sampler = gr.Dropdown(["Euler A", "DPM++ 2M", "UniPC"], value=s.get("sampler_name", "Euler A"), label="High Quality Sampler")
-                    enable_deep_texture = gr.Checkbox(label="Deep Logo & Texture Restoration (TPS Warp)", value=s.get("enable_deep_texture", False))
-                    warp_strength = gr.Slider(0.0, 1.0, value=s.get("warp_strength", 1.0), step=0.1, label="Texture Warp Blend Force")
-                    show_mask = gr.Checkbox(label="Show Masking Step (Debug)", value=s.get("show_mask", False))
+                    lock_seed = gr.Checkbox(
+                        label="🔒 Lock",
+                        value=True if motogp_mode else s.get("lock_seed", False),
+                        scale=0,
+                        container=False,
+                        interactive=not motogp_mode,
+                    )
 
-                run_btn = gr.Button("Generate Try-On", variant="primary")
+                with gr.Accordion("Options" if not motogp_mode else "MotoGP Advanced", open=not motogp_mode):
+                    preserve_head = gr.Checkbox(
+                        label="Preserve Original Head ♥️ (Literal Pixel Paste)",
+                        value=True if motogp_mode else s.get("preserve_head", True),
+                        interactive=not motogp_mode,
+                    )
+                    use_vae_hf = gr.Checkbox(
+                        label="High-Fidelity VAE (ft-mse)",
+                        value=True if motogp_mode else s.get("use_vae_hf", True),
+                        interactive=not motogp_mode,
+                    )
+                    if not motogp_mode:
+                        face_restore_strength = gr.Slider(
+                            0.0,
+                            1.0,
+                            value=s.get("face_restore_strength", 1.0),
+                            step=0.1,
+                            label="Face Restore Blend (GFPGAN)",
+                        )
+                    else:
+                        face_restore_strength = gr.State(0.0)
+                    sampler = gr.Dropdown(
+                        ["Euler A", "DPM++ 2M", "UniPC"],
+                        value="DPM++ 2M" if motogp_mode else s.get("sampler_name", "Euler A"),
+                        label="High Quality Sampler",
+                        interactive=not motogp_mode,
+                    )
+                    if not motogp_mode:
+                        enable_deep_texture = gr.Checkbox(
+                            label="Deep Logo & Texture Restoration (TPS Warp)",
+                            value=s.get("enable_deep_texture", False),
+                        )
+                        warp_strength = gr.Slider(
+                            0.0,
+                            1.0,
+                            value=s.get("warp_strength", 1.0),
+                            step=0.1,
+                            label="Texture Warp Blend Force",
+                        )
+                    else:
+                        enable_deep_texture = gr.State(False)
+                        warp_strength = gr.State(1.0)
+                    show_mask = gr.Checkbox(
+                        label="Show Masking Step (Debug)",
+                        value=s.get("show_mask", False),
+                    )
+
+                run_btn = gr.Button(
+                    "Generate MotoGP Leather Magic" if motogp_mode else "Generate Try-On",
+                    variant="primary",
+                )
                 status_out = gr.Textbox(label="Status", interactive=False, container=False)
-                
                 result_out = gr.Image(label="Result", interactive=False)
-                mask_out   = gr.Image(label="Mask", visible=False)
+                mask_out = gr.Image(label="Mask", visible=False)
 
-        # 🎲 Seed Snap Logic
         btn_42.click(fn=lambda: (42, True), outputs=[seed, lock_seed])
         btn_1337.click(fn=lambda: (1337, True), outputs=[seed, lock_seed])
 
-        # 🎛️ Auto-Preset: Snap sliders to optimal values per mode
         def apply_preset(_res):
+            if motogp_mode:
+                return (
+                    gr.update(value=30),
+                    gr.update(value=4.2),
+                    gr.update(value=11),
+                    gr.update(value=10),
+                )
             return (
-                gr.update(value=30),   # steps
-                gr.update(value=3.5),  # guidance (full Euler sweet spot)
-                gr.update(value=12),   # mask_sharpness
-                gr.update(value=5),    # mask_padding
-                gr.update(value=0.0),  # detail_boost off for first-fit validation
-                gr.update(value=0.0),  # face_restore_strength off for first-fit validation
-                gr.update(value=False),  # preserve_head off until fit is confirmed
+                gr.update(value=30),
+                gr.update(value=3.5),
+                gr.update(value=12),
+                gr.update(value=5),
+                gr.update(value=0.0),
+                gr.update(value=0.0),
+                gr.update(value=False),
             )
-        
-        resolution.change(
-            fn=apply_preset,
-            inputs=[resolution],
-            outputs=[steps, guidance, mask_sharpness, mask_padding, detail_boost, face_restore_strength, preserve_head],
-        )
+
+        if motogp_mode:
+            resolution.change(
+                fn=apply_preset,
+                inputs=[resolution],
+                outputs=[steps, guidance, mask_sharpness, mask_padding],
+            )
+        else:
+            resolution.change(
+                fn=apply_preset,
+                inputs=[resolution],
+                outputs=[steps, guidance, mask_sharpness, mask_padding, detail_boost, face_restore_strength, preserve_head],
+            )
 
         show_mask.change(lambda v: gr.update(visible=v), show_mask, mask_out)
         run_btn.click(
             fn=run_core_tryon,
             inputs=[
-                person_in, cloth_in, category, sleeve_length, pant_length, resolution, steps, guidance, seed, 
+                person_in, cloth_in, category, sleeve_length, pant_length, resolution, steps, guidance, seed,
                 show_mask, mask_sharpness, mask_padding, detail_boost, face_restore_strength, preserve_head,
-                lock_seed, use_vae_hf,
-                sampler, bg_plate, composite_strength, enable_deep_texture, warp_strength
+                lock_seed, use_vae_hf, sampler, bg_plate, composite_strength, enable_deep_texture, warp_strength
             ],
             outputs=[result_out, mask_out, status_out, seed, run_btn],
-            show_progress="hidden"
+            show_progress="hidden",
         )
 
     return demo
@@ -864,6 +1134,7 @@ def get_navbar(active="try-on"):
         html = f.read()
     # Simple manual replacement for Gradio since we aren't using Jinja here
     html = html.replace("{{ 'active' if active == 'try-on' else '' }}", "active" if active == "try-on" else "")
+    html = html.replace("{{ 'active' if active == 'motogp' else '' }}", "active" if active == "motogp" else "")
     html = html.replace("{{ 'active' if active == 'set-garment' else '' }}", "active" if active == "set-garment" else "")
     html = html.replace("{{ 'active' if active == 'garments' else '' }}", "active" if active == "garments" else "")
     return html
@@ -954,7 +1225,7 @@ class TryOnApiRequest(BaseModel):
     person_image_path: str
     garment_image_path: str
     output_image_path: str
-    category: str = "Upper (T-Shirts, Hoodies)"
+    category: str = _CATEGORY_UPPER
     sleeve_length: str = "default"
     pant_length: str = "default"
     resolution: str = "High Quality"
@@ -1206,7 +1477,8 @@ def _inference(
 
 if __name__ == "__main__":
     threading.Thread(target=_load_models, daemon=True).start()
-    demo = build_ui()
+    demo = build_ui("generic")
+    motogp_demo = build_ui("motogp")
 
     # Define the shared Gradio theme here so the mounted app surfaces stay visually consistent.
     # Theme tokens are more reliable than ad hoc CSS overrides for most Gradio-owned colors.
@@ -1263,5 +1535,6 @@ if __name__ == "__main__":
     gradio_extra_css = "footer, .built-with-gradio, .pose-state-hidden { display: none !important; }"
 
     app = gr.mount_gradio_app(fastapi_app, demo, path="/try-on", theme=gradio_theme, css=gradio_extra_css)
+    app = gr.mount_gradio_app(app, motogp_demo, path="/motogp-leather-magic", theme=gradio_theme, css=gradio_extra_css)
 
     uvicorn.run(app, host="127.0.0.1", port=7860)

@@ -10,6 +10,7 @@ The current app serves these pages from `http://127.0.0.1:7860`:
 
 - `/` landing page
 - `/try-on` main virtual try-on UI
+- `/motogp-leather-magic` dedicated MotoGP leather-suit workflow
 - `/set-garment` garment setup studio
 - `/garments` local garment library
 
@@ -63,6 +64,7 @@ Open:
 
 - [Landing](http://127.0.0.1:7860/)
 - [Try-On](http://127.0.0.1:7860/try-on/)
+- [MotoGP Leather Magic](http://127.0.0.1:7860/motogp-leather-magic/)
 - [Setup Garment](http://127.0.0.1:7860/set-garment)
 - [Garment Library](http://127.0.0.1:7860/garments)
 
@@ -144,6 +146,27 @@ Important behavior:
 - `Fast (Draft)` is disabled
 - the wrapper enforces a stronger baseline for high-quality runs
 - the app starts serving before model warmup completes; generation is blocked until the loader is ready
+
+### MotoGP Leather Magic
+
+Dedicated page: `/motogp-leather-magic`
+
+This mode is tuned for a narrower input contract:
+
+- full-body A-pose person photo
+- front-facing full-body leather suit image
+- full-body suit category locked on the page
+
+Runtime defaults are more aggressive than the generic try-on page:
+
+- `Full-Body (Suits, Dresses, Rompers)` locked
+- `High Quality` only
+- at least `30` steps
+- guidance at least `4.2`
+- `DPM++ 2M` sampler
+- preserved head enabled
+- high-fidelity VAE enabled
+- deep texture warp disabled by default
 
 ### Garment Studio
 
