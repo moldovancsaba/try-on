@@ -10,6 +10,7 @@ pillow
 numpy<2
 tqdm
 requests
+pymongo[srv]>=4.8.0
 onnxruntime; sys_platform == 'darwin' and 'arm' in platform_machine
 onnxruntime; sys_platform != 'darwin' or 'arm' not in platform_machine
 scipy

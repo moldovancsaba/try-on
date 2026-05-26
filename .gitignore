@@ -6,6 +6,8 @@ vendor/CatVTON/weights/
 .venv/
 .venv311/
 venv/
+.env*
+!.env.tryon-worker.example
 
 # Python Cache
 __pycache__/
@@ -36,3 +38,4 @@ gfpgan/weights/*.pth
 studio_tools/uploads/
 studio_tools/packages/
 studio_tools/.DS_Store
+queue/

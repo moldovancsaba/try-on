@@ -4,6 +4,21 @@ Standalone local virtual try-on app built on top of CatVTON, Diffusers, and a sh
 
 This repository is the installable application layer. It is not a generic CatVTON training repo and it does not expose the full upstream workflow surface.
 
+## Design System Boundary
+
+This app is informed by [`sovereignsquad/general-design-system`](https://github.com/sovereignsquad/general-design-system), but it does not consume the Mantine packages directly.
+
+Current boundary:
+
+- upstream GDS is the governance and design-authority source
+- this repo is still a `Gradio + FastAPI` surface, not a Mantine application
+- relevant GDS principles are adopted locally through:
+  - [studio_tools/static/global.css](/Users/Shared/Projects/try-on/studio_tools/static/global.css:1)
+  - [studio_tools/templates/navbar.html](/Users/Shared/Projects/try-on/studio_tools/templates/navbar.html:1)
+  - [studio_tools/templates/landing.html](/Users/Shared/Projects/try-on/studio_tools/templates/landing.html:1)
+
+That means “update to latest GDS” in this repository means syncing applicable design rules, navigation/shell patterns, accessibility states, and responsive behavior, not importing Mantine providers or package exports directly.
+
 ## What Ships
 
 The current app serves these pages from `http://127.0.0.1:7860`:
@@ -21,6 +36,11 @@ The current API surface is:
 - `GET /api/quality-contracts`
 - `POST /upload_garment`
 - `POST /save_package`
+
+The local queue worker surface is:
+
+- `python scripts/tryon_queue_worker.py`
+- `python scripts/tryon_queue_worker.py --once`
 
 ## Runtime Summary
 
@@ -67,6 +87,54 @@ Open:
 - [MotoGP Leather Magic](http://127.0.0.1:7860/motogp-leather-magic/)
 - [Setup Garment](http://127.0.0.1:7860/set-garment)
 - [Garment Library](http://127.0.0.1:7860/garments)
+
+## Camera Queue Worker
+
+This repository is also the official local worker runtime for Camera try-on jobs.
+
+Flow:
+
+1. Camera saves the normal submission.
+2. Camera enqueues a `tryon_jobs` record in MongoDB Atlas.
+3. `scripts/tryon_queue_worker.py` polls Atlas, claims a queued job, downloads the source image, downloads the selected Camera-hosted leather suit asset, and calls `POST /api/tryon/run`.
+4. The worker uploads the generated image to ImgBB.
+5. The worker calls Camera’s internal completion endpoint so Camera can create a `pending_review` generated submission.
+6. Camera admins review and approve/reject the result before it becomes share-visible or slideshow-eligible.
+
+Required environment variables:
+
+```bash
+MONGODB_ATLAS_URI=...
+MONGODB_DB_NAME=...
+IMGBB_API_KEY=...
+CAMERA_TRYON_COMPLETE_URL=https://camera.example.com/api/internal/tryon/complete
+CAMERA_TRYON_INTERNAL_SECRET=...
+TRYON_QUEUE_ROOT=/Users/Shared/Projects/try-on/queue
+TRYON_SUIT_ASSET_ROOT=/Users/Shared/Projects/try-on/images
+TRYON_LOCAL_API_URL=http://127.0.0.1:7860/api/tryon/run
+TRYON_ALLOWED_SOURCE_HOSTS=i.ibb.co
+TRYON_POLL_INTERVAL_SECONDS=20
+TRYON_LEASE_DURATION_SECONDS=600
+TRYON_MAX_ATTEMPTS=3
+```
+
+Recommended setup:
+
+```bash
+cp .env.tryon-worker.example .env.tryon-worker
+```
+
+Verify the worker contract before running live jobs:
+
+```bash
+./.venv311/bin/python scripts/verify_tryon_worker_setup.py
+```
+
+Important suit-asset boundary:
+
+- Camera is now the primary owner of uploaded leather-suit assets.
+- The worker downloads the suit image from the `leather_suits` record first.
+- `TRYON_SUIT_ASSET_ROOT` remains only as a legacy fallback for older suit rows without a Camera-hosted asset URL.
 
 ## Model Vault Contract
 

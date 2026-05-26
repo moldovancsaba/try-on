@@ -191,6 +191,13 @@ textarea:focus-visible {
     padding: var(--space-lg);
 }
 
+.accent-panel {
+    background: color-mix(in srgb, var(--color-accent) 12%, var(--color-panel));
+    border: 1px solid color-mix(in srgb, var(--color-accent-hi) 40%, var(--color-border));
+    border-radius: var(--radius-lg);
+    padding: var(--space-lg);
+}
+
 
 /* ============================================================
    6. TOOLBAR
