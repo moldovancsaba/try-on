@@ -8,6 +8,8 @@ vendor/CatVTON/weights/
 venv/
 .env*
 !.env.tryon-worker.example
+.config/worker_settings.json
+.runtime/
 
 # Python Cache
 __pycache__/

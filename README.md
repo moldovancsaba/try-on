@@ -26,6 +26,7 @@ The current app serves these pages from `http://127.0.0.1:7860`:
 - `/` landing page
 - `/try-on` main virtual try-on UI
 - `/motogp-leather-magic` dedicated MotoGP leather-suit workflow
+- `/worker-control` local worker operations surface
 - `/set-garment` garment setup studio
 - `/garments` local garment library
 
@@ -34,6 +35,9 @@ The current API surface is:
 - `POST /api/tryon/run`
 - `GET /api/capabilities`
 - `GET /api/quality-contracts`
+- `GET /api/worker/status`
+- `GET /api/worker/settings`
+- `POST /api/worker/settings`
 - `POST /upload_garment`
 - `POST /save_package`
 
@@ -85,6 +89,7 @@ Open:
 - [Landing](http://127.0.0.1:7860/)
 - [Try-On](http://127.0.0.1:7860/try-on/)
 - [MotoGP Leather Magic](http://127.0.0.1:7860/motogp-leather-magic/)
+- [Worker Control](http://127.0.0.1:7860/worker-control/)
 - [Setup Garment](http://127.0.0.1:7860/set-garment)
 - [Garment Library](http://127.0.0.1:7860/garments)
 
@@ -98,8 +103,15 @@ Flow:
 2. Camera enqueues a `tryon_jobs` record in MongoDB Atlas.
 3. `scripts/tryon_queue_worker.py` polls Atlas, claims a queued job, downloads the source image, downloads the selected Camera-hosted leather suit asset, and calls `POST /api/tryon/run`.
 4. The worker uploads the generated image to ImgBB.
-5. The worker calls Camera’s internal completion endpoint so Camera can create a `pending_review` generated submission.
+5. The worker persists upload state, calls Camera’s internal completion endpoint, and only then marks the queue row `done`.
 6. Camera admins review and approve/reject the result before it becomes share-visible or slideshow-eligible.
+
+Operational behavior:
+
+- Atlas is the source of truth for queued, retrying, and completed jobs
+- the local Mac can be offline; queued work remains in Atlas and is picked up later
+- the worker maintains lease heartbeats, stale-lease recovery, and local runtime diagnostics
+- the worker is intended to run as a macOS `launchd` service
 
 Required environment variables:
 
@@ -112,8 +124,12 @@ CAMERA_TRYON_INTERNAL_SECRET=...
 TRYON_QUEUE_ROOT=/Users/Shared/Projects/try-on/queue
 TRYON_SUIT_ASSET_ROOT=/Users/Shared/Projects/try-on/images
 TRYON_LOCAL_API_URL=http://127.0.0.1:7860/api/tryon/run
-TRYON_ALLOWED_SOURCE_HOSTS=i.ibb.co
-TRYON_POLL_INTERVAL_SECONDS=20
+TRYON_ALLOWED_PERSON_SOURCE_HOSTS=i.ibb.co
+TRYON_ALLOWED_SUIT_SOURCE_HOSTS=i.ibb.co
+TRYON_MAX_SOURCE_IMAGE_BYTES=26214400
+TRYON_MAX_SUIT_IMAGE_BYTES=26214400
+TRYON_ALLOW_REDIRECTS=false
+TRYON_POLL_INTERVAL_SECONDS=300
 TRYON_LEASE_DURATION_SECONDS=600
 TRYON_MAX_ATTEMPTS=3
 ```
@@ -128,6 +144,16 @@ Verify the worker contract before running live jobs:
 
 ```bash
 ./.venv311/bin/python scripts/verify_tryon_worker_setup.py
+```
+
+Install the worker as a background service:
+
+```bash
+mkdir -p ~/Library/LaunchAgents
+cp launchd/com.tryon.camera-worker.plist ~/Library/LaunchAgents/
+launchctl unload ~/Library/LaunchAgents/com.tryon.camera-worker.plist 2>/dev/null || true
+launchctl load ~/Library/LaunchAgents/com.tryon.camera-worker.plist
+launchctl kickstart -k gui/$(id -u)/com.tryon.camera-worker
 ```
 
 Important suit-asset boundary:
@@ -271,6 +297,15 @@ Required fields:
 - `garment_image_path`
 - `output_image_path`
 
+Optional high-value fields:
+
+- `processing_profile`
+- `category`
+- `steps`
+- `guidance`
+- `preserve_head`
+- `sampler_name`
+
 Example:
 
 ```json
@@ -278,6 +313,7 @@ Example:
   "person_image_path": "/abs/path/person.png",
   "garment_image_path": "/abs/path/garment.png",
   "output_image_path": "/abs/path/result.png",
+  "processing_profile": "motogp_leather_magic",
   "category": "Upper (T-Shirts, Hoodies)",
   "steps": 24,
   "guidance": 3.5,
@@ -294,12 +330,44 @@ Response:
   "status": "succeeded",
   "output_image_path": "/abs/path/result.png",
   "message": "ok",
+  "processing_profile": "motogp_leather_magic",
   "quality_validation": {},
   "metadata_path": "/abs/path/result.png.json"
 }
 ```
 
 If `show_mask=true`, the API also writes and returns a sibling mask image path.
+
+When `processing_profile=motogp_leather_magic`, the server enforces the full-body MotoGP preset:
+
+- full-body category
+- minimum 30 steps
+- guidance >= 4.2
+- `DPM++ 2M`
+- preserved head enabled
+- high-fidelity VAE enabled
+
+### `GET /api/worker/status`
+
+Returns the current worker runtime snapshot, saved worker settings, recent structured worker events, and queue counts when Atlas credentials are available.
+
+### `GET /api/worker/settings`
+
+Returns persisted worker settings from `.config/worker_settings.json`.
+
+### `POST /api/worker/settings`
+
+Updates persisted worker settings.
+
+Example:
+
+```json
+{
+  "enabled": true,
+  "pollIntervalSeconds": 300,
+  "updatedBy": "local-operator"
+}
+```
 
 ### `POST /upload_garment`
 

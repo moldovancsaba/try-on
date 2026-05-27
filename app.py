@@ -29,6 +29,9 @@ from services.capabilities import (
 )
 from services.output_artifacts import build_output_metadata, write_sidecar_metadata
 from services.quality_contracts import get_quality_contracts, validate_image_output
+from services.worker_contracts import PROCESSING_PROFILE_GENERIC, PROCESSING_PROFILE_MOTOGP, normalize_processing_profile
+from services.worker_runtime import append_worker_event, load_worker_status, read_recent_worker_events
+from services.worker_settings import load_worker_settings, normalize_worker_settings, save_worker_settings
 
 # ── Apple Silicon & Environment Optimization ──────────────────────────────────
 _MODELS_ROOT = get_models_root()
@@ -1135,6 +1138,7 @@ def get_navbar(active="try-on"):
     # Simple manual replacement for Gradio since we aren't using Jinja here
     html = html.replace("{{ 'active' if active == 'try-on' else '' }}", "active" if active == "try-on" else "")
     html = html.replace("{{ 'active' if active == 'motogp' else '' }}", "active" if active == "motogp" else "")
+    html = html.replace("{{ 'active' if active == 'worker-control' else '' }}", "active" if active == "worker-control" else "")
     html = html.replace("{{ 'active' if active == 'set-garment' else '' }}", "active" if active == "set-garment" else "")
     html = html.replace("{{ 'active' if active == 'garments' else '' }}", "active" if active == "garments" else "")
     return html
@@ -1157,6 +1161,11 @@ async def library_page(request: Request):
     if os.path.exists(PACKAGES_DIR):
         packages = [p for p in os.listdir(PACKAGES_DIR) if os.path.isdir(os.path.join(PACKAGES_DIR, p))]
     return templates.TemplateResponse(request=request, name="library.html", context={"packages": packages, "active": "garments"})
+
+
+@fastapi_app.get("/worker-control", response_class=HTMLResponse)
+async def worker_control_page(request: Request):
+    return templates.TemplateResponse(request=request, name="worker_control.html", context={"active": "worker-control"})
 
 @fastapi_app.post("/upload_garment")
 async def upload_garment(file: UploadFile = File(...)):
@@ -1225,6 +1234,7 @@ class TryOnApiRequest(BaseModel):
     person_image_path: str
     garment_image_path: str
     output_image_path: str
+    processing_profile: str = PROCESSING_PROFILE_GENERIC
     category: str = _CATEGORY_UPPER
     sleeve_length: str = "default"
     pant_length: str = "default"
@@ -1255,8 +1265,65 @@ class StudioPackageRequest(BaseModel):
     keypoints: list[dict[str, object]] = Field(default_factory=list)
 
 
+class WorkerSettingsRequest(BaseModel):
+    enabled: bool
+    pollIntervalSeconds: int
+    updatedBy: str | None = None
+
+
+def _apply_processing_profile(payload: TryOnApiRequest) -> TryOnApiRequest:
+    profile = normalize_processing_profile(payload.processing_profile)
+    payload.processing_profile = profile
+    if profile == PROCESSING_PROFILE_MOTOGP:
+        payload.category = _CATEGORY_FULL_BODY
+        payload.sleeve_length = "default"
+        payload.pant_length = "default"
+        payload.resolution = "High Quality"
+        payload.steps = max(int(payload.steps), 30)
+        payload.guidance = max(float(payload.guidance), 4.2)
+        payload.mask_sharpness = max(int(payload.mask_sharpness), 11)
+        payload.mask_padding = max(int(payload.mask_padding), 10)
+        payload.detail_boost = min(float(payload.detail_boost), 0.2)
+        payload.face_restore_strength = 0.0
+        payload.preserve_head = True
+        payload.lock_seed = True
+        payload.use_vae_hf = True
+        payload.sampler_name = "DPM++ 2M"
+        payload.composite_strength = 0.0
+        payload.enable_deep_texture = False
+        payload.warp_strength = 1.0
+    return payload
+
+
+def _build_worker_status_report() -> dict[str, object]:
+    report = load_worker_status(app_root=_ROOT)
+    report["settings"] = load_worker_settings(app_root=_ROOT)
+    report["recentEvents"] = read_recent_worker_events(limit=20, app_root=_ROOT)
+    report["queueRoot"] = os.getenv("TRYON_QUEUE_ROOT", str(_ROOT / "queue"))
+    report["localApiUrl"] = os.getenv("TRYON_LOCAL_API_URL", "http://127.0.0.1:7860/api/tryon/run")
+
+    mongodb_uri = (os.getenv("MONGODB_ATLAS_URI") or os.getenv("MONGODB_URI") or "").strip()
+    mongodb_db_name = (os.getenv("MONGODB_DB_NAME") or os.getenv("MONGODB_DB") or "").strip()
+    queue_counts: dict[str, int] = {}
+    if mongodb_uri and mongodb_db_name:
+        try:
+            from pymongo import MongoClient
+
+            client = MongoClient(mongodb_uri, serverSelectionTimeoutMS=3000)
+            db = client[mongodb_db_name]
+            for status in ("queued", "claimed", "processing", "uploading_result", "notifying_camera", "retry_wait", "done", "failed"):
+                queue_counts[status] = int(db["tryon_jobs"].count_documents({"status": status}))
+            client.close()
+        except Exception as error:
+            report["queueError"] = str(error)
+    report["queueCounts"] = queue_counts
+    return report
+
+
 def _run_tryon_api_job(payload: TryOnApiRequest) -> dict[str, object]:
     from PIL import Image
+
+    payload = _apply_processing_profile(payload)
 
     if not _READY.is_set():
         raise HTTPException(status_code=503, detail="Models are still loading.")
@@ -1314,6 +1381,7 @@ def _run_tryon_api_job(payload: TryOnApiRequest) -> dict[str, object]:
         "status": "succeeded",
         "output_image_path": str(output_path),
         "message": status_text or "ok",
+        "processing_profile": payload.processing_profile,
     }
     if payload.show_mask and mask_img is not None:
         mask_path = output_path.with_name(f"{output_path.stem}__mask{output_path.suffix}")
@@ -1388,10 +1456,13 @@ if "fastapi_app" in globals():
         metadata = build_output_metadata(
             feature_key="try_on",
             output_path=output_path,
-            parameters=payload.model_dump(),
+            parameters=_apply_processing_profile(payload).model_dump(),
             quality_validation=validation,
             capability_report=_get_capability_report(),
-            extra={"mask_image_path": mask_path_value},
+            extra={
+                "mask_image_path": mask_path_value,
+                "processing_profile": _apply_processing_profile(payload).processing_profile,
+            },
         )
         sidecar_path = write_sidecar_metadata(output_path, metadata)
         response["quality_validation"] = validation
@@ -1405,6 +1476,43 @@ if "fastapi_app" in globals():
     @fastapi_app.get("/api/quality-contracts")
     async def quality_contracts_api():
         return JSONResponse(get_quality_contracts())
+
+    @fastapi_app.get("/api/worker/status")
+    async def worker_status_api():
+        return JSONResponse(_build_worker_status_report())
+
+    @fastapi_app.get("/api/worker/settings")
+    async def worker_settings_api():
+        return JSONResponse(load_worker_settings(app_root=_ROOT))
+
+    @fastapi_app.post("/api/worker/settings")
+    async def worker_settings_update_api(payload: WorkerSettingsRequest):
+        normalized = normalize_worker_settings(
+            {
+                "enabled": payload.enabled,
+                "pollIntervalSeconds": payload.pollIntervalSeconds,
+                "updatedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "updatedBy": payload.updatedBy or "local-operator",
+            }
+        )
+        save_worker_settings(normalized, app_root=_ROOT)
+        append_worker_event(
+            {
+                "jobId": None,
+                "at": normalized["updatedAt"],
+                "level": "info",
+                "event": "worker_settings_updated",
+                "status": "settings",
+                "stage": "settings_updated",
+                "details": {
+                    "enabled": normalized["enabled"],
+                    "pollIntervalSeconds": normalized["pollIntervalSeconds"],
+                    "updatedBy": normalized["updatedBy"],
+                },
+            },
+            app_root=_ROOT,
+        )
+        return JSONResponse(normalized)
 
 
 _original_inference = _inference

@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Worker Control</title>
+    <link rel="stylesheet" href="/static/global.css">
+</head>
+<body>
+    {% include 'navbar.html' %}
+    <main class="container">
+        <section class="card worker-header" aria-labelledby="worker-control-title">
+            <div>
+                <h1 id="worker-control-title">Worker Control Center</h1>
+                <p>Monitor the local Camera processing worker, inspect queue state, and adjust safe polling settings.</p>
+            </div>
+        </section>
+
+        <section class="worker-grid" aria-label="Worker status overview">
+            <article class="card worker-stat">
+                <h2>Worker State</h2>
+                <p id="worker-running" class="worker-stat-value">Loading…</p>
+                <p id="worker-note" class="worker-stat-meta">Waiting for runtime status.</p>
+            </article>
+            <article class="card worker-stat">
+                <h2>Current Job</h2>
+                <p id="current-job" class="worker-stat-value">Loading…</p>
+                <p id="last-claim" class="worker-stat-meta">No claim data yet.</p>
+            </article>
+            <article class="card worker-stat">
+                <h2>Queue Health</h2>
+                <p id="queue-summary" class="worker-stat-value">Loading…</p>
+                <p id="queue-detail" class="worker-stat-meta">Waiting for queue counts.</p>
+            </article>
+            <article class="card worker-stat">
+                <h2>Last Result</h2>
+                <p id="last-result" class="worker-stat-value">Loading…</p>
+                <p id="last-failure" class="worker-stat-meta">Waiting for event history.</p>
+            </article>
+        </section>
+
+        <section class="accent-panel" aria-labelledby="worker-settings-title">
+            <h2 id="worker-settings-title">Worker Settings</h2>
+            <form id="worker-settings-form" class="worker-settings-form">
+                <label class="worker-field">
+                    <span>Worker Enabled</span>
+                    <input id="worker-enabled" type="checkbox" aria-describedby="worker-enabled-help">
+                </label>
+                <p id="worker-enabled-help" class="worker-help">Disable to pause queue intake without changing environment files.</p>
+
+                <label class="worker-field" for="poll-interval">
+                    <span>Polling Interval</span>
+                    <select id="poll-interval" aria-describedby="poll-interval-help">
+                        <option value="180">3 minutes</option>
+                        <option value="240">4 minutes</option>
+                        <option value="300">5 minutes</option>
+                    </select>
+                </label>
+                <p id="poll-interval-help" class="worker-help">Use slower polling for low-noise operations. Changes apply on the worker’s next loop.</p>
+
+                <div class="worker-actions">
+                    <button type="submit" class="btn">Save Worker Settings</button>
+                    <button type="button" class="btn btn-secondary" id="refresh-worker-status">Refresh Status</button>
+                </div>
+                <p id="worker-settings-message" class="worker-message" aria-live="polite"></p>
+            </form>
+        </section>
+
+        <section class="card" aria-labelledby="worker-events-title">
+            <h2 id="worker-events-title">Recent Worker Events</h2>
+            <ul id="worker-events" class="worker-events-list">
+                <li>Loading recent events…</li>
+            </ul>
+        </section>
+    </main>
+
+    <script>
+        async function fetchJson(url, options) {
+            const response = await fetch(url, options);
+            if (!response.ok) {
+                const text = await response.text();
+                throw new Error(text || `HTTP ${response.status}`);
+            }
+            return response.json();
+        }
+
+        function setText(id, value) {
+            document.getElementById(id).textContent = value;
+        }
+
+        function renderEvents(events) {
+            const list = document.getElementById("worker-events");
+            list.innerHTML = "";
+            if (!events || !events.length) {
+                const item = document.createElement("li");
+                item.textContent = "No worker events recorded yet.";
+                list.appendChild(item);
+                return;
+            }
+            events.forEach((event) => {
+                const item = document.createElement("li");
+                item.className = "worker-event";
+                item.textContent = `${event.at || "unknown time"} — ${event.event || "event"}${event.jobId ? ` — ${event.jobId}` : ""}`;
+                list.appendChild(item);
+            });
+        }
+
+        function renderStatus(data) {
+            setText("worker-running", data.workerRunning ? "Running" : "Stopped");
+            setText("worker-note", data.enabled === false ? "Worker is disabled by local settings." : `Poll interval: ${data.pollIntervalSeconds || "unknown"} seconds`);
+            setText("current-job", data.currentJobId || "Idle");
+            setText("last-claim", data.lastClaimedJobId ? `Last claimed: ${data.lastClaimedJobId}` : "No claimed job recorded.");
+            const queueCounts = data.queueCounts || {};
+            const queueTotal = Object.values(queueCounts).reduce((sum, value) => sum + value, 0);
+            setText("queue-summary", `${queueTotal} tracked jobs`);
+            setText("queue-detail", Object.keys(queueCounts).length ? Object.entries(queueCounts).map(([key, value]) => `${key}: ${value}`).join(" · ") : (data.queueError || "Queue counts unavailable."));
+            setText("last-result", data.lastSuccessAt ? `Last success: ${data.lastSuccessAt}` : "No success recorded yet.");
+            setText("last-failure", data.lastFailureAt ? `Last failure: ${data.lastFailureAt} (${data.lastFailureCode || "unknown"})` : "No recent failure recorded.");
+            renderEvents(data.recentEvents || []);
+
+            const settings = data.settings || {};
+            document.getElementById("worker-enabled").checked = Boolean(settings.enabled);
+            document.getElementById("poll-interval").value = String(settings.pollIntervalSeconds || 300);
+        }
+
+        async function refreshStatus() {
+            setText("worker-settings-message", "Refreshing worker status…");
+            try {
+                const data = await fetchJson("/api/worker/status");
+                renderStatus(data);
+                setText("worker-settings-message", "Worker status refreshed.");
+            } catch (error) {
+                setText("worker-settings-message", `Status refresh failed: ${error.message}`);
+            }
+        }
+
+        document.getElementById("refresh-worker-status").addEventListener("click", refreshStatus);
+        document.getElementById("worker-settings-form").addEventListener("submit", async (event) => {
+            event.preventDefault();
+            const payload = {
+                enabled: document.getElementById("worker-enabled").checked,
+                pollIntervalSeconds: Number(document.getElementById("poll-interval").value),
+                updatedBy: "local-operator"
+            };
+            setText("worker-settings-message", "Saving worker settings…");
+            try {
+                await fetchJson("/api/worker/settings", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(payload)
+                });
+                setText("worker-settings-message", "Worker settings saved. Changes apply on the next worker loop.");
+                await refreshStatus();
+            } catch (error) {
+                setText("worker-settings-message", `Failed to save worker settings: ${error.message}`);
+            }
+        });
+
+        refreshStatus();
+    </script>
+</body>
+</html>

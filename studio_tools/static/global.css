@@ -273,6 +273,12 @@ button:active,
     transform: translateY(0);
 }
 
+.btn-secondary {
+    background: var(--color-input);
+    color: var(--color-text);
+    border: 1px solid var(--color-border-hi);
+}
+
 
 /* ============================================================
    9. INSTRUCTIONS BAR
@@ -467,6 +473,53 @@ canvas {
     line-height: 1.6;
 }
 
+.worker-header,
+.worker-stat,
+.worker-settings-form,
+.worker-events-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+}
+
+.worker-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: var(--space-md);
+}
+
+.worker-stat-value {
+    color: var(--color-text);
+    font-size: var(--font-size-lg);
+    font-weight: 700;
+}
+
+.worker-stat-meta,
+.worker-help,
+.worker-message,
+.worker-event {
+    color: var(--color-text-dim);
+    font-size: var(--font-size-sm);
+}
+
+.worker-field {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+    color: var(--color-text);
+    font-weight: 600;
+}
+
+.worker-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-sm);
+}
+
+.worker-events-list {
+    list-style: none;
+}
+
 
 /* ============================================================
    14. GRADIO OVERRIDES
@@ -527,6 +580,10 @@ footer,
 
     .hero-subtitle {
         max-width: 60ch;
+    }
+
+    .worker-actions {
+        flex-direction: column;
     }
 }
 

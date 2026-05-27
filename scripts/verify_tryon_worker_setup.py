@@ -125,6 +125,8 @@ def main() -> int:
     complete_ok, complete_url = check_env("CAMERA_TRYON_COMPLETE_URL")
     secret_ok, _secret = check_env("CAMERA_TRYON_INTERNAL_SECRET")
     local_api_ok, local_api_url = check_env("TRYON_LOCAL_API_URL")
+    person_hosts_ok, person_hosts = check_env("TRYON_ALLOWED_PERSON_SOURCE_HOSTS", ["TRYON_ALLOWED_SOURCE_HOSTS"])
+    suit_hosts_ok, suit_hosts = check_env("TRYON_ALLOWED_SUIT_SOURCE_HOSTS", ["TRYON_ALLOWED_SOURCE_HOSTS"])
 
     checks.append(print_result(mongo_ok, "MONGODB_ATLAS_URI / MONGODB_URI", "configured" if mongo_ok else "missing"))
     checks.append(print_result(mongo_db_ok, "MONGODB_DB_NAME / MONGODB_DB", mongo_db if mongo_db_ok else "missing"))
@@ -132,6 +134,8 @@ def main() -> int:
     checks.append(print_result(complete_ok, "CAMERA_TRYON_COMPLETE_URL", complete_url if complete_ok else "missing"))
     checks.append(print_result(secret_ok, "CAMERA_TRYON_INTERNAL_SECRET", "configured" if secret_ok else "missing"))
     checks.append(print_result(local_api_ok, "TRYON_LOCAL_API_URL", local_api_url if local_api_ok else "missing"))
+    checks.append(print_result(person_hosts_ok, "TRYON_ALLOWED_PERSON_SOURCE_HOSTS", person_hosts if person_hosts_ok else "missing"))
+    checks.append(print_result(suit_hosts_ok, "TRYON_ALLOWED_SUIT_SOURCE_HOSTS", suit_hosts if suit_hosts_ok else "missing"))
 
     queue_root = Path((os.getenv("TRYON_QUEUE_ROOT") or "/Users/Shared/Projects/try-on/queue").strip()).expanduser()
     suit_root = Path((os.getenv("TRYON_SUIT_ASSET_ROOT") or "/Users/Shared/Projects/try-on/images").strip()).expanduser()
