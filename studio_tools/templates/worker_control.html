@@ -39,6 +39,27 @@
             </article>
         </section>
 
+        <section class="worker-grid" aria-label="Managed local services">
+            <article class="card worker-stat" aria-labelledby="app-service-title">
+                <h2 id="app-service-title">App Service</h2>
+                <p id="app-service-state" class="worker-stat-value">Loading…</p>
+                <p id="app-service-meta" class="worker-stat-meta">Checking app process state.</p>
+                <div class="worker-actions">
+                    <button type="button" class="btn btn-secondary" data-service-action="app:start">Start App</button>
+                    <button type="button" class="btn btn-secondary" data-service-action="app:restart">Restart App</button>
+                </div>
+            </article>
+            <article class="card worker-stat" aria-labelledby="worker-service-title">
+                <h2 id="worker-service-title">Worker Service</h2>
+                <p id="worker-service-state" class="worker-stat-value">Loading…</p>
+                <p id="worker-service-meta" class="worker-stat-meta">Checking worker process state.</p>
+                <div class="worker-actions">
+                    <button type="button" class="btn btn-secondary" data-service-action="worker:run_now">Run Worker Now</button>
+                    <button type="button" class="btn btn-secondary" data-service-action="worker:restart">Restart Worker</button>
+                </div>
+            </article>
+        </section>
+
         <section class="accent-panel" aria-labelledby="worker-settings-title">
             <h2 id="worker-settings-title">Worker Settings</h2>
             <form id="worker-settings-form" class="worker-settings-form">
@@ -118,6 +139,24 @@
             setText("last-failure", data.lastFailureAt ? `Last failure: ${data.lastFailureAt} (${data.lastFailureCode || "unknown"})` : "No recent failure recorded.");
             renderEvents(data.recentEvents || []);
 
+            const services = data.services || {};
+            const appService = services.app || {};
+            const workerService = services.worker || {};
+            setText("app-service-state", appService.running ? "Running" : "Stopped");
+            setText(
+                "app-service-meta",
+                appService.running
+                    ? `PID ${appService.pid || "unknown"} · launchd loaded: ${appService.launchd?.loaded ? "yes" : "no"}`
+                    : "App process is not currently running."
+            );
+            setText("worker-service-state", workerService.running ? "Running" : "Stopped");
+            setText(
+                "worker-service-meta",
+                workerService.running
+                    ? `PID ${workerService.pid || "unknown"} · launchd loaded: ${workerService.launchd?.loaded ? "yes" : "no"}`
+                    : "Worker process is not currently running."
+            );
+
             const settings = data.settings || {};
             document.getElementById("worker-enabled").checked = Boolean(settings.enabled);
             document.getElementById("poll-interval").value = String(settings.pollIntervalSeconds || 300);
@@ -135,6 +174,26 @@
         }
 
         document.getElementById("refresh-worker-status").addEventListener("click", refreshStatus);
+        document.querySelectorAll("[data-service-action]").forEach((button) => {
+            button.addEventListener("click", async () => {
+                const [target, action] = button.dataset.serviceAction.split(":");
+                setText("worker-settings-message", `Requesting ${action.replace("_", " ")} for ${target}…`);
+                button.disabled = true;
+                try {
+                    await fetchJson("/api/worker/service-action", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ target, action, requestedBy: "local-operator" })
+                    });
+                    setText("worker-settings-message", `${target} ${action.replace("_", " ")} accepted.`);
+                    setTimeout(refreshStatus, 1500);
+                } catch (error) {
+                    setText("worker-settings-message", `Service action failed: ${error.message}`);
+                } finally {
+                    button.disabled = false;
+                }
+            });
+        });
         document.getElementById("worker-settings-form").addEventListener("submit", async (event) => {
             event.preventDefault();
             const payload = {

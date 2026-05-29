@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.tryon.app-server</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/Shared/Projects/try-on/scripts/run_app_service.sh</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/Shared/Projects/try-on</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/Shared/Projects/try-on/queue/logs/app.stdout.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/Shared/Projects/try-on/queue/logs/app.stderr.log</string>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>

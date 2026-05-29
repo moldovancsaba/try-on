@@ -38,6 +38,7 @@ The current API surface is:
 - `GET /api/worker/status`
 - `GET /api/worker/settings`
 - `POST /api/worker/settings`
+- `POST /api/worker/service-action`
 - `POST /upload_garment`
 - `POST /save_package`
 
@@ -146,6 +147,12 @@ Verify the worker contract before running live jobs:
 ./.venv311/bin/python scripts/verify_tryon_worker_setup.py
 ```
 
+Check local service health:
+
+```bash
+./.venv311/bin/python scripts/service_healthcheck.py
+```
+
 Install the worker as a background service:
 
 ```bash
@@ -155,6 +162,32 @@ launchctl unload ~/Library/LaunchAgents/com.tryon.camera-worker.plist 2>/dev/nul
 launchctl load ~/Library/LaunchAgents/com.tryon.camera-worker.plist
 launchctl kickstart -k gui/$(id -u)/com.tryon.camera-worker
 ```
+
+Install the local app server as a background service:
+
+```bash
+mkdir -p ~/Library/LaunchAgents
+cp launchd/com.tryon.app-server.plist ~/Library/LaunchAgents/
+launchctl unload ~/Library/LaunchAgents/com.tryon.app-server.plist 2>/dev/null || true
+launchctl load ~/Library/LaunchAgents/com.tryon.app-server.plist
+launchctl kickstart -k gui/$(id -u)/com.tryon.app-server
+```
+
+Useful service operations:
+
+```bash
+launchctl print gui/$(id -u)/com.tryon.camera-worker
+launchctl print gui/$(id -u)/com.tryon.app-server
+launchctl kickstart -k gui/$(id -u)/com.tryon.camera-worker
+launchctl kickstart -k gui/$(id -u)/com.tryon.app-server
+```
+
+Operator control notes:
+
+- `/worker-control` now shows both app-service and worker-service state
+- the worker can be forced to poll immediately with `Run Worker Now`
+- service actions are routed through `launchctl` when the managed plist is installed
+- restart or run-now actions are blocked while a queue job is actively processing
 
 Important suit-asset boundary:
 

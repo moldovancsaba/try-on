@@ -29,6 +29,8 @@ from services.capabilities import (
 )
 from services.output_artifacts import build_output_metadata, write_sidecar_metadata
 from services.quality_contracts import get_quality_contracts, validate_image_output
+from services.mongo_uri import normalize_mongodb_uri
+from services.service_manager import get_managed_services_status, perform_service_action
 from services.worker_contracts import PROCESSING_PROFILE_GENERIC, PROCESSING_PROFILE_MOTOGP, normalize_processing_profile
 from services.worker_runtime import append_worker_event, load_worker_status, read_recent_worker_events
 from services.worker_settings import load_worker_settings, normalize_worker_settings, save_worker_settings
@@ -131,6 +133,21 @@ def _refresh_capability_report() -> dict[str, Any]:
 
 def _get_capability_report() -> dict[str, Any]:
     return _CAPABILITY_REPORT or _refresh_capability_report()
+
+
+def _load_local_env_file(path: Path) -> None:
+    if not path.exists():
+        return
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+        if value.startswith(("'", '"')) and value.endswith(("'", '"')) and len(value) >= 2:
+            value = value[1:-1]
+        os.environ.setdefault(key, value)
 
 
 def _resolve_gfpgan_checkpoint() -> Path:
@@ -1271,6 +1288,12 @@ class WorkerSettingsRequest(BaseModel):
     updatedBy: str | None = None
 
 
+class ServiceActionRequest(BaseModel):
+    target: str
+    action: str
+    requestedBy: str | None = None
+
+
 def _apply_processing_profile(payload: TryOnApiRequest) -> TryOnApiRequest:
     profile = normalize_processing_profile(payload.processing_profile)
     payload.processing_profile = profile
@@ -1296,9 +1319,12 @@ def _apply_processing_profile(payload: TryOnApiRequest) -> TryOnApiRequest:
 
 
 def _build_worker_status_report() -> dict[str, object]:
+    _load_local_env_file(_ROOT / ".env.tryon-worker")
+    _load_local_env_file(_ROOT / ".env.local")
     report = load_worker_status(app_root=_ROOT)
     report["settings"] = load_worker_settings(app_root=_ROOT)
     report["recentEvents"] = read_recent_worker_events(limit=20, app_root=_ROOT)
+    report["services"] = get_managed_services_status(app_root=_ROOT, current_process_is_app=True)
     report["queueRoot"] = os.getenv("TRYON_QUEUE_ROOT", str(_ROOT / "queue"))
     report["localApiUrl"] = os.getenv("TRYON_LOCAL_API_URL", "http://127.0.0.1:7860/api/tryon/run")
 
@@ -1309,7 +1335,7 @@ def _build_worker_status_report() -> dict[str, object]:
         try:
             from pymongo import MongoClient
 
-            client = MongoClient(mongodb_uri, serverSelectionTimeoutMS=3000)
+            client = MongoClient(normalize_mongodb_uri(mongodb_uri), serverSelectionTimeoutMS=3000)
             db = client[mongodb_db_name]
             for status in ("queued", "claimed", "processing", "uploading_result", "notifying_camera", "retry_wait", "done", "failed"):
                 queue_counts[status] = int(db["tryon_jobs"].count_documents({"status": status}))
@@ -1513,6 +1539,38 @@ if "fastapi_app" in globals():
             app_root=_ROOT,
         )
         return JSONResponse(normalized)
+
+    @fastapi_app.post("/api/worker/service-action")
+    async def worker_service_action_api(payload: ServiceActionRequest):
+        runtime_state = load_worker_status(app_root=_ROOT)
+        current_job_id = runtime_state.get("currentJobId")
+        if current_job_id and payload.action.strip().lower() in {"restart", "run_now"}:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Service action blocked while job {current_job_id} is active.",
+            )
+        try:
+            result = perform_service_action(payload.target, payload.action, app_root=_ROOT)
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        requested_at = result["acceptedAt"]
+        append_worker_event(
+            {
+                "jobId": None,
+                "at": requested_at,
+                "level": "info",
+                "event": "service_action_requested",
+                "status": "service_action",
+                "stage": "service_action_requested",
+                "details": {
+                    "target": result["target"],
+                    "action": result["action"],
+                    "requestedBy": payload.requestedBy or "local-operator",
+                },
+            },
+            app_root=_ROOT,
+        )
+        return JSONResponse(result)
 
 
 _original_inference = _inference

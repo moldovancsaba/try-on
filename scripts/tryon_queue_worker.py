@@ -28,6 +28,7 @@ from services.worker_contracts import (
     validate_job_document,
     validate_suit_document,
 )
+from services.mongo_uri import normalize_mongodb_uri
 from services.worker_runtime import append_worker_event, write_worker_status
 from services.worker_settings import DEFAULT_POLL_INTERVAL_SECONDS, load_worker_settings
 
@@ -128,10 +129,7 @@ def load_config() -> WorkerConfig:
         mongodb_db_name=mongodb_db_name,
         queue_root=Path((os.getenv("TRYON_QUEUE_ROOT") or "/Users/Shared/Projects/try-on/queue").strip()).expanduser(),
         worker_id=(os.getenv("TRYON_WORKER_ID") or socket.gethostname() or "tryon-worker-01").strip(),
-        poll_interval_seconds=parse_int(
-            os.getenv("TRYON_POLL_INTERVAL_SECONDS"),
-            int(worker_settings.get("pollIntervalSeconds", DEFAULT_POLL_INTERVAL_SECONDS)),
-        ),
+        poll_interval_seconds=int(worker_settings.get("pollIntervalSeconds", DEFAULT_POLL_INTERVAL_SECONDS)),
         lease_duration_seconds=parse_int(os.getenv("TRYON_LEASE_DURATION_SECONDS"), 600),
         max_attempts=parse_int(os.getenv("TRYON_MAX_ATTEMPTS"), 3),
         worker_enabled=bool(worker_settings.get("enabled", True)),
@@ -203,7 +201,7 @@ def retry_delay_minutes(attempt_count: int) -> int | None:
 class TryOnQueueWorker:
     def __init__(self, config: WorkerConfig):
         self.config = config
-        self.mongo = MongoClient(config.mongodb_uri)
+        self.mongo = MongoClient(normalize_mongodb_uri(config.mongodb_uri))
         self.db = self.mongo[config.mongodb_db_name]
         self.jobs = self.db["tryon_jobs"]
         self.suits = self.db["leather_suits"]
