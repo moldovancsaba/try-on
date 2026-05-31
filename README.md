@@ -371,6 +371,15 @@ When `processing_profile=motogp_leather_magic`, the server enforces the full-bod
 
 Returns the current worker runtime snapshot, saved worker settings, recent structured worker events, and queue counts when Atlas credentials are available.
 
+Sample fields:
+
+- `workerRunning`: local worker loop process is active.
+- `workerJobActive`: worker is actively processing a job, backed by heartbeat freshness and current job id.
+- `queueCounts`: per-state queue cardinalities from Atlas (`queued`, `processing`, `retrying`, `done`, `failed`, `declined`, `archived`).
+- `services`: app and worker process state from launchctl/pid checks.
+
+`workerRunning=true` with `workerJobActive=false` means the worker service is idle.
+
 ### `GET /api/worker/settings`
 
 Returns persisted worker settings from `.config/worker_settings.json`.

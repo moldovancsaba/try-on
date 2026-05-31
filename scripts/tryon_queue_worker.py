@@ -322,6 +322,7 @@ class TryOnQueueWorker:
                 }
             },
         )
+        self.update_runtime_status(lastHeartbeatAt=now)
 
     def schedule_retry_or_failure(self, job: dict[str, Any], code: str, message: str, details: str | None = None) -> str:
         attempt_count = int(job.get("processing", {}).get("attemptCount", 0))

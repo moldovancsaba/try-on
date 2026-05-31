@@ -21,6 +21,7 @@
                 <h2>Worker State</h2>
                 <p id="worker-running" class="worker-stat-value">Loading…</p>
                 <p id="worker-note" class="worker-stat-meta">Waiting for runtime status.</p>
+                <p id="worker-job-active" class="worker-stat-meta">Checking active-job state.</p>
             </article>
             <article class="card worker-stat">
                 <h2>Current Job</h2>
@@ -128,6 +129,8 @@
 
         function renderStatus(data) {
             setText("worker-running", data.workerRunning ? "Running" : "Stopped");
+            const jobActive = Boolean(data.workerJobActive);
+            setText("worker-job-active", `Active job: ${jobActive ? "Yes" : "No"}`);
             setText("worker-note", data.enabled === false ? "Worker is disabled by local settings." : `Poll interval: ${data.pollIntervalSeconds || "unknown"} seconds`);
             setText("current-job", data.currentJobId || "Idle");
             setText("last-claim", data.lastClaimedJobId ? `Last claimed: ${data.lastClaimedJobId}` : "No claimed job recorded.");

@@ -34,6 +34,7 @@ def load_worker_status(app_root: Path | None = None) -> dict[str, Any]:
         return {
             "workerRunning": False,
             "currentJobId": None,
+            "lastHeartbeatAt": None,
             "lastLoopAt": None,
             "lastClaimedJobId": None,
             "lastSuccessAt": None,

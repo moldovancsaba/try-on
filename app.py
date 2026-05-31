@@ -10,6 +10,7 @@ import shutil
 import sys
 import time
 import threading
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -129,6 +130,36 @@ def _refresh_capability_report() -> dict[str, Any]:
     global _CAPABILITY_REPORT
     _CAPABILITY_REPORT = build_capability_report(_MODELS_ROOT, runtime_state=_runtime_state_snapshot())
     return _CAPABILITY_REPORT
+
+
+_WORKER_RESTART_BLOCK_STALE_SECONDS = 900
+
+
+def _parse_iso_utc(value: Any) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+
+def _is_runtime_job_active(runtime_state: dict[str, Any]) -> bool:
+    current_job_id = runtime_state.get("currentJobId")
+    if not current_job_id:
+        return False
+
+    if not bool(runtime_state.get("workerRunning")):
+        return False
+
+    last_heartbeat = _parse_iso_utc(runtime_state.get("lastHeartbeatAt"))
+    last_signal = last_heartbeat or _parse_iso_utc(runtime_state.get("lastLoopAt"))
+    if last_signal is None:
+        return True
+
+    now = datetime.now(timezone.utc)
+    signal_time = last_signal if last_signal.tzinfo else last_signal.replace(tzinfo=timezone.utc)
+    return (now - signal_time).total_seconds() <= _WORKER_RESTART_BLOCK_STALE_SECONDS
 
 
 def _get_capability_report() -> dict[str, Any]:
@@ -1321,7 +1352,9 @@ def _apply_processing_profile(payload: TryOnApiRequest) -> TryOnApiRequest:
 def _build_worker_status_report() -> dict[str, object]:
     _load_local_env_file(_ROOT / ".env.tryon-worker")
     _load_local_env_file(_ROOT / ".env.local")
-    report = load_worker_status(app_root=_ROOT)
+    runtime_state = load_worker_status(app_root=_ROOT)
+    runtime_state["workerJobActive"] = _is_runtime_job_active(runtime_state)
+    report = runtime_state
     report["settings"] = load_worker_settings(app_root=_ROOT)
     report["recentEvents"] = read_recent_worker_events(limit=20, app_root=_ROOT)
     report["services"] = get_managed_services_status(app_root=_ROOT, current_process_is_app=True)
@@ -1544,13 +1577,14 @@ if "fastapi_app" in globals():
     async def worker_service_action_api(payload: ServiceActionRequest):
         runtime_state = load_worker_status(app_root=_ROOT)
         current_job_id = runtime_state.get("currentJobId")
-        if current_job_id and payload.action.strip().lower() in {"restart", "run_now"}:
+        normalized_action = payload.action.strip().lower()
+        if current_job_id and normalized_action in {"restart", "run_now"} and _is_runtime_job_active(runtime_state):
             raise HTTPException(
                 status_code=409,
                 detail=f"Service action blocked while job {current_job_id} is active.",
             )
         try:
-            result = perform_service_action(payload.target, payload.action, app_root=_ROOT)
+            result = perform_service_action(payload.target, normalized_action, app_root=_ROOT)
         except ValueError as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
         requested_at = result["acceptedAt"]

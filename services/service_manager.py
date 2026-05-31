@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shlex
 import subprocess
 import time
@@ -136,6 +137,12 @@ def _pid_metadata(pid: int | None) -> dict[str, Any]:
     return {"pid": pid, "uptimeSeconds": _parse_etime_seconds(etime)}
 
 
+def _is_launchd_state_running(raw: str | None) -> bool:
+    if not raw:
+        return False
+    return bool(re.search(r"(?m)^\\s*state\\s*=\\s*running\\b", raw))
+
+
 def _parse_etime_seconds(value: str) -> int | None:
     raw = (value or "").strip()
     if not raw:
@@ -166,10 +173,13 @@ def _launch_agent_status(service: ManagedService) -> dict[str, Any]:
     proc = _run(["launchctl", "print", f"gui/{uid}/{service.launch_label}"])
     installed_path = Path.home() / "Library" / "LaunchAgents" / service.launchd_plist_name
     bundled_path = _repo_root() / "launchd" / service.launchd_plist_name
+    running_state = _is_launchd_state_running(proc.stdout)
     return {
         "configured": bundled_path.exists(),
         "installed": installed_path.exists(),
         "loaded": proc.returncode == 0,
+        "running": running_state,
+        "raw": proc.stdout.strip() if proc.stdout else proc.stderr.strip(),
     }
 
 
@@ -180,11 +190,12 @@ def get_managed_services_status(app_root: Path | None = None, *, current_process
         pid = os.getpid() if key == "app" and current_process_is_app else _pgrep_pid(service.process_match)
         pid_info = _pid_metadata(pid)
         launchd_info = _launch_agent_status(service)
+        running = bool(pid_info["pid"] or launchd_info.get("running"))
         services[key] = {
             "key": key,
             "label": service.label,
-            "running": pid is not None,
-            "healthy": pid is not None,
+            "running": running,
+            "healthy": running,
             "pid": pid_info["pid"],
             "uptimeSeconds": pid_info["uptimeSeconds"],
             "launchd": launchd_info,
