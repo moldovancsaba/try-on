@@ -34,6 +34,9 @@ from services.worker_settings import DEFAULT_POLL_INTERVAL_SECONDS, load_worker_
 
 
 UTC = timezone.utc
+PIPELINE_VERSION = "1.1.0"
+PUBLICATION_STATE_UPLOADED = "uploaded"
+PUBLICATION_STATE_CAMERA_NOTIFIED = "camera_notified"
 
 
 def now_iso() -> str:
@@ -341,6 +344,125 @@ class TryOnQueueWorker:
         self.jobs.update_one({"jobId": job["jobId"]}, {"$set": payload})
         return "failed"
 
+    def _refresh_job(self, job_id: str) -> dict[str, Any]:
+        return self.jobs.find_one({"jobId": job_id}) or {}
+
+    def _is_camera_notified(self, job: dict[str, Any]) -> bool:
+        return bool((job.get("processing") or {}).get("cameraNotifiedAt"))
+
+    def _has_published_url(self, result: dict[str, Any]) -> bool:
+        return bool(str(result.get("publicResultUrl") or "").strip())
+
+    def _mark_publication_error(self, job_id: str, code: str, message: str, details: str | None = None) -> None:
+        now = now_iso()
+        self.jobs.update_one(
+            {"jobId": job_id},
+            {
+                "$set": {
+                    "processing.publicationError": {
+                        "code": code,
+                        "message": message,
+                        "details": details,
+                        "occurredAt": now,
+                    },
+                    "updatedAt": now,
+                }
+            },
+        )
+
+    def _clear_publication_error(self, job_id: str) -> None:
+        self.jobs.update_one({"jobId": job_id}, {"$unset": {"processing.publicationError": ""}})
+
+    def _upsert_publication_result(self, job_id: str, upload: dict[str, Any], now: str) -> None:
+        self.jobs.update_one(
+            {"jobId": job_id},
+            {
+                "$set": {
+                    "status": "uploading_result",
+                    "stage": "uploaded_result",
+                    "updatedAt": now,
+                    "result": {
+                        "publicResultUrl": upload["imageUrl"],
+                        "imgbbDeleteUrl": upload.get("deleteUrl"),
+                        "provider": "imgbb",
+                        "uploadedAt": now,
+                    },
+                    "processing.publicationState": PUBLICATION_STATE_UPLOADED,
+                },
+                "$unset": {"processing.publicationError": ""},
+            },
+        )
+
+    def _mark_camera_notified(self, job_id: str, now: str) -> None:
+        self.jobs.update_one(
+            {"jobId": job_id},
+            {
+                "$set": {
+                    "processing.cameraNotifiedAt": now,
+                    "processing.publicationState": PUBLICATION_STATE_CAMERA_NOTIFIED,
+                    "updatedAt": now,
+                },
+                "$unset": {"processing.publicationError": ""},
+            },
+        )
+
+    def ensure_published_result(self, job_id: str, result_path: Path, *, job_snapshot: dict[str, Any]) -> dict[str, Any]:
+        latest_job = self._refresh_job(job_id) or job_snapshot
+        result_state = latest_job.get("result") or {}
+        public_result_url = str(result_state.get("publicResultUrl") or "").strip()
+        if self._has_published_url(result_state):
+            self.emit_event(
+                level="info",
+                event="imgbb_reused",
+                status="uploading_result",
+                stage="uploaded_result",
+                job_id=job_id,
+                details={"publicResultUrl": redact_url(public_result_url), "provider": str(result_state.get("provider") or "imgbb")},
+            )
+            self._clear_publication_error(job_id)
+            return {"imageUrl": public_result_url, "deleteUrl": result_state.get("imgbbDeleteUrl")}
+
+        self.update_stage(job_id, "uploading_result", "uploading_result")
+        upload = self.upload_to_imgbb(result_path)
+        now = now_iso()
+        self._upsert_publication_result(job_id, upload, now)
+        self.emit_event(
+            level="info",
+            event="imgbb_uploaded",
+            status="uploading_result",
+            stage="uploaded_result",
+            job_id=job_id,
+            details={"publicResultUrl": redact_url(upload["imageUrl"])},
+        )
+        return upload
+
+    def ensure_camera_notified(self, job_id: str, upload: dict[str, Any]) -> bool:
+        latest_job = self._refresh_job(job_id)
+        if self._is_camera_notified(latest_job):
+            self._clear_publication_error(job_id)
+            self.emit_event(
+                level="info",
+                event="camera_completion_skipped",
+                status="notifying_camera",
+                stage="notifying_camera",
+                job_id=job_id,
+                details={"reason": "already_notified"},
+            )
+            return False
+
+        self.update_stage(job_id, "notifying_camera", "notifying_camera")
+        self.notify_camera_completion(job_id, upload)
+        now = now_iso()
+        self._mark_camera_notified(job_id, now)
+        self.emit_event(
+            level="info",
+            event="camera_completion_succeeded",
+            status="notifying_camera",
+            stage="notifying_camera",
+            job_id=job_id,
+        )
+        return True
+
     def resolve_local_suit_asset(self, suit: dict[str, Any]) -> Path:
         if not self.config.suit_asset_root:
             raise RuntimeError("missing legacy local suit asset root")
@@ -465,7 +587,7 @@ class TryOnQueueWorker:
                 "publicResultUrl": upload["imageUrl"],
                 "deleteUrl": upload.get("deleteUrl"),
                 "workerId": self.config.worker_id,
-                "processorMeta": {"pipelineVersion": "1.1.0", "processingProfile": PROCESSING_PROFILE_MOTOGP},
+                "processorMeta": {"pipelineVersion": PIPELINE_VERSION, "processingProfile": PROCESSING_PROFILE_MOTOGP},
             },
             headers={"x-camera-tryon-secret": self.config.camera_internal_secret},
             timeout=60,
@@ -512,6 +634,52 @@ class TryOnQueueWorker:
                     job_id=job_id,
                 )
 
+            existing_job = self._refresh_job(job_id)
+            if existing_job and self._is_camera_notified(existing_job):
+                done_payload = {
+                    "status": "done",
+                    "stage": "done",
+                    "updatedAt": now_iso(),
+                    "processing.finishedAt": now_iso(),
+                    "processing.leaseExpiresAt": None,
+                    "processing.lastHeartbeatAt": now_iso(),
+                    "error": {"code": None, "message": None, "details": None},
+                }
+                self._clear_publication_error(job_id)
+                self.jobs.update_one({"jobId": job_id}, {"$set": done_payload})
+                self.update_runtime_status(currentJobId=None, lastSuccessAt=now_iso())
+                target = self.config.queue_root / "done" / job_id
+                target.parent.mkdir(parents=True, exist_ok=True)
+                if workspace_root.exists():
+                    if target.exists():
+                        shutil.rmtree(target)
+                    shutil.move(str(workspace_root), str(target))
+                return
+
+            existing_result = existing_job.get("result") or {}
+            if self._has_published_url(existing_result):
+                self.update_stage(job_id, "uploading_result", "uploaded_result")
+                upload = self.ensure_published_result(job_id, result_path, job_snapshot=existing_job)
+                self.ensure_camera_notified(job_id, upload)
+                done_payload = {
+                    "status": "done",
+                    "stage": "done",
+                    "updatedAt": now_iso(),
+                    "processing.finishedAt": now_iso(),
+                    "processing.leaseExpiresAt": None,
+                    "processing.lastHeartbeatAt": now_iso(),
+                    "error": {"code": None, "message": None, "details": None},
+                }
+                self.jobs.update_one({"jobId": job_id}, {"$set": done_payload})
+                self.update_runtime_status(currentJobId=None, lastSuccessAt=now_iso())
+                target = self.config.queue_root / "done" / job_id
+                target.parent.mkdir(parents=True, exist_ok=True)
+                if workspace_root.exists():
+                    if target.exists():
+                        shutil.rmtree(target)
+                    shutil.move(str(workspace_root), str(target))
+                return
+
             self.update_stage(job_id, "processing", "downloading_input", {"processing.startedAt": now_iso()})
             self.download_source_image(
                 job["source"]["imageUrl"],
@@ -544,64 +712,9 @@ class TryOnQueueWorker:
             self.update_stage(job_id, "processing", "running_tryon")
             api_result = self.call_local_tryon_api(person_input_path, suit_input_path, result_path, processing_profile)
             append_log(log_path, json.dumps({"stage": "running_tryon", "response": api_result}))
+            upload = self.ensure_published_result(job_id, result_path, job_snapshot=job)
+            self.ensure_camera_notified(job_id, upload)
 
-            latest_job = self.jobs.find_one({"jobId": job_id}) or job
-            result_state = latest_job.get("result") or {}
-            processing_state = latest_job.get("processing") or {}
-            if str(result_state.get("publicResultUrl") or "").strip():
-                upload = {
-                    "imageUrl": str(result_state.get("publicResultUrl") or "").strip(),
-                    "deleteUrl": result_state.get("imgbbDeleteUrl"),
-                }
-            else:
-                self.update_stage(job_id, "uploading_result", "uploading_result")
-                upload = self.upload_to_imgbb(result_path)
-                self.jobs.update_one(
-                    {"jobId": job_id},
-                    {
-                        "$set": {
-                            "status": "uploading_result",
-                            "stage": "uploaded_result",
-                            "updatedAt": now_iso(),
-                            "result": {
-                                "publicResultUrl": upload["imageUrl"],
-                                "imgbbDeleteUrl": upload.get("deleteUrl"),
-                                "provider": "imgbb",
-                                "uploadedAt": now_iso(),
-                            },
-                            "processing.publicationState": "uploaded",
-                        }
-                    },
-                )
-                self.emit_event(
-                    level="info",
-                    event="imgbb_uploaded",
-                    status="uploading_result",
-                    stage="uploaded_result",
-                    job_id=job_id,
-                    details={"publicResultUrl": redact_url(upload["imageUrl"])},
-                )
-
-            if not processing_state.get("cameraNotifiedAt"):
-                self.update_stage(job_id, "notifying_camera", "notifying_camera")
-                self.notify_camera_completion(job_id, upload)
-                self.jobs.update_one(
-                    {"jobId": job_id},
-                    {
-                        "$set": {
-                            "processing.cameraNotifiedAt": now_iso(),
-                            "processing.publicationState": "camera_notified",
-                            "updatedAt": now_iso(),
-                        }
-                    },
-                )
-                self.emit_event(
-                    level="info",
-                    event="camera_completion_succeeded",
-                    status="notifying_camera",
-                    stage="notifying_camera",
-                    job_id=job_id,
-                )
             done_payload = {
                 "status": "done",
                 "stage": "done",
@@ -626,6 +739,10 @@ class TryOnQueueWorker:
             outcome = "failed"
             try:
                 latest_job = self.jobs.find_one({"jobId": job_id}) or job
+                if "imgbb_upload" in message:
+                    self._mark_publication_error(job_id, "imgbb_upload", message)
+                elif "camera_completion_failed" in message:
+                    self._mark_publication_error(job_id, "camera_completion", message)
             except Exception as lookup_error:  # noqa: BLE001
                 append_log(log_path, json.dumps({"stage": "failure_lookup_error", "error": redact_url(str(lookup_error))}))
             try:
