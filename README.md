@@ -153,27 +153,14 @@ Check local service health:
 ./.venv311/bin/python scripts/service_healthcheck.py
 ```
 
-Install the worker as a background service:
+Install and refresh both services with one command:
 
 ```bash
-mkdir -p ~/Library/LaunchAgents
-cp launchd/com.tryon.camera-worker.plist ~/Library/LaunchAgents/
-launchctl unload ~/Library/LaunchAgents/com.tryon.camera-worker.plist 2>/dev/null || true
-launchctl load ~/Library/LaunchAgents/com.tryon.camera-worker.plist
-launchctl kickstart -k gui/$(id -u)/com.tryon.camera-worker
+chmod +x scripts/bootstrap_local_services.sh
+./scripts/bootstrap_local_services.sh
 ```
 
-Install the local app server as a background service:
-
-```bash
-mkdir -p ~/Library/LaunchAgents
-cp launchd/com.tryon.app-server.plist ~/Library/LaunchAgents/
-launchctl unload ~/Library/LaunchAgents/com.tryon.app-server.plist 2>/dev/null || true
-launchctl load ~/Library/LaunchAgents/com.tryon.app-server.plist
-launchctl kickstart -k gui/$(id -u)/com.tryon.app-server
-```
-
-Useful service operations:
+Useful manual service operations:
 
 ```bash
 launchctl print gui/$(id -u)/com.tryon.camera-worker
