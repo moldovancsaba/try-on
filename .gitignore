@@ -10,6 +10,7 @@ venv/
 !.env.tryon-worker.example
 .config/worker_settings.json
 .runtime/
+.service-bin/
 
 # Python Cache
 __pycache__/

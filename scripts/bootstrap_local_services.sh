@@ -21,6 +21,8 @@ if [ ! -x "$REPO_ROOT/.venv311/bin/python" ]; then
   exit 1
 fi
 
+"$REPO_ROOT/scripts/ensure_service_launchers.sh"
+
 mkdir -p "$LAUNCH_AGENTS_DIR"
 mkdir -p "$REPO_ROOT/queue/logs"
 

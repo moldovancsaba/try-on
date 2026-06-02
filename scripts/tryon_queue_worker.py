@@ -29,6 +29,7 @@ from services.worker_contracts import (
     validate_suit_document,
 )
 from services.mongo_uri import normalize_mongodb_uri
+from services.single_task_lock import SingleTaskLock
 from services.worker_runtime import append_worker_event, write_worker_status
 from services.worker_settings import DEFAULT_POLL_INTERVAL_SECONDS, load_worker_settings
 
@@ -564,6 +565,23 @@ class TryOnQueueWorker:
             raise RuntimeError("local_tryon_api_missing_output")
         return data
 
+    def local_tryon_api_is_ready(self) -> bool:
+        capabilities_url = self.config.local_tryon_api_url
+        if capabilities_url.endswith("/api/tryon/run"):
+            capabilities_url = capabilities_url[: -len("/api/tryon/run")] + "/api/capabilities"
+        else:
+            capabilities_url = capabilities_url.rstrip("/") + "/api/capabilities"
+        try:
+            response = requests.get(capabilities_url, timeout=10)
+            if response.status_code >= 400:
+                return False
+            payload = response.json()
+        except Exception:
+            return False
+        feature = (payload.get("features") or {}).get("try_on") or {}
+        runtime = payload.get("runtime") or {}
+        return feature.get("status") == "ready" and runtime.get("models_ready") is True
+
     def upload_to_imgbb(self, image_path: Path) -> dict[str, Any]:
         encoded = base64.b64encode(image_path.read_bytes()).decode("utf-8")
         response = requests.post(
@@ -784,6 +802,10 @@ class TryOnQueueWorker:
             self.update_runtime_status(currentJobId=None, workerRunning=True, note="worker_disabled")
             print("[tryon-worker] worker disabled by settings")
             return False
+        if not self.local_tryon_api_is_ready():
+            self.update_runtime_status(currentJobId=None, workerRunning=True, note="local_tryon_api_not_ready")
+            print("[tryon-worker] local try-on API is not ready")
+            return False
         self.recover_stale_jobs()
         job = self.claim_next_job()
         if not job:
@@ -813,14 +835,21 @@ class TryOnQueueWorker:
 def main() -> int:
     config = load_config()
     ensure_queue_dirs(config.queue_root)
-    worker = TryOnQueueWorker(config)
-    worker.update_runtime_status(currentJobId=None, lastLoopAt=now_iso())
-    run_once = "--once" in sys.argv
-    if run_once:
-        worker.run_once()
+    process_lock = SingleTaskLock("queue-worker-process", app_root=REPO_ROOT)
+    if not process_lock.acquire(blocking=False):
+        print("[tryon-worker] another queue worker is already running; exiting")
         return 0
-    worker.run_forever()
-    return 0
+    worker = TryOnQueueWorker(config)
+    try:
+        worker.update_runtime_status(currentJobId=None, lastLoopAt=now_iso())
+        run_once = "--once" in sys.argv
+        if run_once:
+            worker.run_once()
+            return 0
+        worker.run_forever()
+        return 0
+    finally:
+        process_lock.release()
 
 
 if __name__ == "__main__":

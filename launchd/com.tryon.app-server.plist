@@ -7,9 +7,24 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/bin/bash</string>
-        <string>/Users/Shared/Projects/try-on/scripts/run_app_service.sh</string>
+        <string>/Users/Shared/Projects/try-on/.venv311/bin/tryon-app-server</string>
+        <string>-u</string>
+        <string>/Users/Shared/Projects/try-on/app.py</string>
     </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>LANG</key>
+        <string>en_US.UTF-8</string>
+        <key>LC_ALL</key>
+        <string>en_US.UTF-8</string>
+        <key>PYTORCH_ENABLE_MPS_FALLBACK</key>
+        <string>1</string>
+        <key>SMF_CATVTON_USE_MPS</key>
+        <string>1</string>
+        <key>TRYON_MODELS_ROOT</key>
+        <string>/Users/Shared/Models</string>
+    </dict>
 
     <key>WorkingDirectory</key>
     <string>/Users/Shared/Projects/try-on</string>

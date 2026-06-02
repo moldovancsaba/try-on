@@ -32,6 +32,7 @@ from services.output_artifacts import build_output_metadata, write_sidecar_metad
 from services.quality_contracts import get_quality_contracts, validate_image_output
 from services.mongo_uri import normalize_mongodb_uri
 from services.service_manager import get_managed_services_status, perform_service_action
+from services.single_task_lock import SingleTaskLock
 from services.worker_contracts import PROCESSING_PROFILE_GENERIC, PROCESSING_PROFILE_MOTOGP, normalize_processing_profile
 from services.worker_runtime import append_worker_event, load_worker_status, read_recent_worker_events
 from services.worker_settings import load_worker_settings, normalize_worker_settings, save_worker_settings
@@ -122,6 +123,7 @@ def _runtime_state_snapshot() -> dict[str, Any]:
 
     return {
         "startup_error": _ERROR,
+        "models_ready": bool(_READY.is_set() and not _ERROR),
         "gfpgan_ready": gfpgan_ready,
     }
 
@@ -260,6 +262,7 @@ def _load_catvton_package(pkg_name: str = "catvton") -> Any:
 
 # ── Global Model State ────────────────────────────────────────────────────────
 _LOCK    = threading.Lock()
+_TRYON_TASK_LOCK = threading.Lock()
 _PIPE    = None
 _MASKER  = None
 _ERROR   = None
@@ -419,7 +422,7 @@ def _load_models():
     import torch
     
     try:
-        report = _refresh_capability_report()
+        report = build_capability_report(_MODELS_ROOT)
         if not feature_is_available(report, "try_on"):
             raise RuntimeError(feature_status_message(report, "try_on"))
 
@@ -505,6 +508,24 @@ def _load_models():
         print(f"[try-on] Load failed: {exc}")
 
 def _inference(person_img, cloth_img, category, sleeve_length, pant_length, resolution, num_steps, guidance, seed, show_mask, mask_sharpness, mask_padding, detail_boost, face_restore_strength, preserve_head, lock_seed, use_vae_hf, sampler_name, bg_plate, composite_strength, enable_deep_texture, warp_strength, progress=gr.Progress()):
+    if not _TRYON_TASK_LOCK.acquire(blocking=False):
+        yield None, None, "Try-On is already processing one job. Please wait for the current task to finish.", gr.update(), gr.update(interactive=True, value="Generate Try-On")
+        return
+
+    system_task_lock = SingleTaskLock("tryon-task", app_root=_ROOT)
+    if not system_task_lock.acquire(blocking=False):
+        _TRYON_TASK_LOCK.release()
+        yield None, None, "Try-On is already processing one job. Please wait for the current task to finish.", gr.update(), gr.update(interactive=True, value="Generate Try-On")
+        return
+
+    try:
+        yield from _run_inference_locked(person_img, cloth_img, category, sleeve_length, pant_length, resolution, num_steps, guidance, seed, show_mask, mask_sharpness, mask_padding, detail_boost, face_restore_strength, preserve_head, lock_seed, use_vae_hf, sampler_name, bg_plate, composite_strength, enable_deep_texture, warp_strength, progress)
+    finally:
+        system_task_lock.release()
+        _TRYON_TASK_LOCK.release()
+
+
+def _run_inference_locked(person_img, cloth_img, category, sleeve_length, pant_length, resolution, num_steps, guidance, seed, show_mask, mask_sharpness, mask_padding, detail_boost, face_restore_strength, preserve_head, lock_seed, use_vae_hf, sampler_name, bg_plate, composite_strength, enable_deep_texture, warp_strength, progress=gr.Progress()):
     import torch
     import random
     import json

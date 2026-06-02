@@ -7,9 +7,19 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/Shared/Projects/try-on/.venv311/bin/python</string>
+        <string>/Users/Shared/Projects/try-on/.venv311/bin/tryon-queue-worker</string>
         <string>/Users/Shared/Projects/try-on/scripts/tryon_queue_worker.py</string>
     </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>LANG</key>
+        <string>en_US.UTF-8</string>
+        <key>LC_ALL</key>
+        <string>en_US.UTF-8</string>
+        <key>TRYON_MODELS_ROOT</key>
+        <string>/Users/Shared/Models</string>
+    </dict>
 
     <key>WorkingDirectory</key>
     <string>/Users/Shared/Projects/try-on</string>

@@ -180,6 +180,10 @@ def build_capability_report(models_root: Path, *, runtime_state: dict[str, Any] 
         features["try_on"]["status"] = STATUS_UNAVAILABLE
         features["try_on"]["notes"].append(f"Runtime startup error: {runtime_state['startup_error']}")
 
+    if runtime_state.get("models_ready") is False:
+        features["try_on"]["status"] = STATUS_UNAVAILABLE
+        features["try_on"]["notes"].append("Runtime models are still loading.")
+
     if runtime_state.get("gfpgan_ready") is False:
         features["try_on"]["notes"].append(
             "Face restoration is disabled because GFPGAN could not be initialized."
@@ -206,6 +210,7 @@ def build_capability_report(models_root: Path, *, runtime_state: dict[str, Any] 
             "degraded": status_counts["degraded"],
             "unavailable": status_counts[STATUS_UNAVAILABLE],
         },
+        "runtime": runtime_state,
         "warnings": warnings,
     }
 

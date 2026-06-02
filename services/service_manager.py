@@ -32,7 +32,9 @@ def _repo_root(app_root: Path | None = None) -> Path:
 
 def _service_definitions(app_root: Path | None = None) -> dict[str, ManagedService]:
     root = _repo_root(app_root)
-    python_bin = root / ".venv311" / "bin" / "python"
+    launcher_dir = root / ".venv311" / "bin"
+    app_launcher = launcher_dir / "tryon-app-server"
+    worker_launcher = launcher_dir / "tryon-queue-worker"
     app_log_out = root / "queue" / "logs" / "app.stdout.log"
     app_log_err = root / "queue" / "logs" / "app.stderr.log"
     worker_log_out = root / "queue" / "logs" / "worker.stdout.log"
@@ -40,17 +42,20 @@ def _service_definitions(app_root: Path | None = None) -> dict[str, ManagedServi
     app_cmd = (
         f"cd {shlex.quote(str(root))} && "
         "export LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 PYTORCH_ENABLE_MPS_FALLBACK=1 SMF_CATVTON_USE_MPS=1 && "
-        f"nohup {shlex.quote(str(python_bin))} -u {shlex.quote(str(root / 'app.py'))} "
+        f"{shlex.quote(str(root / 'scripts' / 'ensure_service_launchers.sh'))} && "
+        f"nohup {shlex.quote(str(app_launcher))} -u {shlex.quote(str(root / 'app.py'))} "
         f"> {shlex.quote(str(app_log_out))} 2> {shlex.quote(str(app_log_err))} < /dev/null &"
     )
     worker_cmd = (
         f"cd {shlex.quote(str(root))} && "
-        f"nohup {shlex.quote(str(python_bin))} {shlex.quote(str(root / 'scripts' / 'tryon_queue_worker.py'))} "
+        f"{shlex.quote(str(root / 'scripts' / 'ensure_service_launchers.sh'))} && "
+        f"nohup {shlex.quote(str(worker_launcher))} {shlex.quote(str(root / 'scripts' / 'tryon_queue_worker.py'))} "
         f"> {shlex.quote(str(worker_log_out))} 2> {shlex.quote(str(worker_log_err))} < /dev/null &"
     )
     worker_once_cmd = (
         f"cd {shlex.quote(str(root))} && "
-        f"nohup {shlex.quote(str(python_bin))} {shlex.quote(str(root / 'scripts' / 'tryon_queue_worker.py'))} --once "
+        f"{shlex.quote(str(root / 'scripts' / 'ensure_service_launchers.sh'))} && "
+        f"nohup {shlex.quote(str(worker_launcher))} {shlex.quote(str(root / 'scripts' / 'tryon_queue_worker.py'))} --once "
         f"> {shlex.quote(str(worker_log_out))} 2> {shlex.quote(str(worker_log_err))} < /dev/null &"
     )
     return {
@@ -85,7 +90,7 @@ def _run(command: list[str]) -> subprocess.CompletedProcess[str]:
 
 
 def _shell_background(command: str) -> None:
-    subprocess.Popen(["bash", "-lc", command], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.Popen(["/bin/zsh", "-lc", command], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 def _launchctl_label(service: ManagedService) -> str:
@@ -94,6 +99,11 @@ def _launchctl_label(service: ManagedService) -> str:
 
 def _install_launch_agent(service: ManagedService, app_root: Path | None = None) -> Path:
     root = _repo_root(app_root)
+    ensure_script = root / "scripts" / "ensure_service_launchers.sh"
+    if ensure_script.exists():
+        result = _run([str(ensure_script)])
+        if result.returncode != 0:
+            raise RuntimeError(result.stderr.strip() or result.stdout.strip() or "failed to prepare service launchers")
     source = root / "launchd" / service.launchd_plist_name
     target = Path.home() / "Library" / "LaunchAgents" / service.launchd_plist_name
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -140,7 +150,7 @@ def _pid_metadata(pid: int | None) -> dict[str, Any]:
 def _is_launchd_state_running(raw: str | None) -> bool:
     if not raw:
         return False
-    return bool(re.search(r"(?m)^\\s*state\\s*=\\s*running\\b", raw))
+    return bool(re.search(r"(?m)^\s*state\s*=\s*running\b", raw))
 
 
 def _parse_etime_seconds(value: str) -> int | None:
