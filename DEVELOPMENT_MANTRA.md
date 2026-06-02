@@ -30,9 +30,8 @@ The root documentation should describe only what this repository actually ships:
 
 - landing page
 - try-on
-- face swap
-- hold product
-- image to video
+- MotoGP leather-suit workflow
+- worker control
 - garment setup and library
 - public API endpoints
 
@@ -75,3 +74,15 @@ Rules:
 - avoid introducing new subsystems without documenting the resulting surface area
 - prefer explicit route and storage contracts
 - keep high-value operational behavior easy to trace from the root docs
+
+## 8. Dedicated Worker Runtime Is Single-Task
+
+The Camera queue worker is intended to run on a dedicated local machine that processes exactly one try-on job at a time.
+
+Rules:
+
+- keep `README.md` aligned with app, worker, queue, and launchd behavior
+- keep service process names explicit through `tryon-app-server` and `tryon-queue-worker`
+- do not add a second queue consumer, background generation path, or parallel try-on code path without a deliberate contract change
+- keep readiness checks in front of queue claiming so the worker does not lease online work before the app is ready
+- keep lock behavior easy to audit from `services/single_task_lock.py`, `app.py`, and `scripts/tryon_queue_worker.py`

@@ -8,6 +8,8 @@ from model_paths import get_app_root
 
 
 class SingleTaskLock:
+    """File-backed lock for local single-task service work."""
+
     def __init__(self, name: str, *, app_root: Path | None = None):
         root = app_root or get_app_root()
         self.path = root / ".runtime" / "locks" / f"{name}.lock"

@@ -115,7 +115,7 @@ def main() -> int:
     load_env_file(repo_root / ".env.tryon-worker")
     load_env_file(repo_root / ".env.local")
 
-    print("Try-on worker setup verification\n")
+    print("Try-On worker setup verification\n")
 
     checks: list[bool] = []
 

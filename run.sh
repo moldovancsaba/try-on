@@ -1,11 +1,10 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 set -euo pipefail
 
-# Navigate to project directory
 cd "$(dirname "$0")"
 
-# Find local venv
+# Locate or create the local virtual environment used by the app.
 if [ -d ".venv311" ]; then
     VENV_DIR=".venv311"
 elif [ -d ".venv" ]; then
@@ -23,10 +22,8 @@ else
     fi
 fi
 
-# Activate venv
 source "$VENV_DIR/bin/activate"
 
-# Force UTF-8 locale for Gradio/Orjson
 export LANG=en_US.UTF-8
 export LC_ALL=en_US.UTF-8
 
@@ -61,8 +58,7 @@ if [ -n "${existing_pid}" ]; then
     esac
 fi
 
-# Filter a small set of recurring startup noise lines for readability.
-# This is presentation-only and should not be treated as a substitute for fixing real warnings at the source.
+# Filter a small set of recurring startup noise lines for readability only.
 python -u app.py 2>&1 | \
     grep --line-buffered -v "NOTE: Redirects" | \
     grep --line-buffered -v "Class AVF" | \

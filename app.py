@@ -1452,7 +1452,7 @@ def _run_tryon_api_job(payload: TryOnApiRequest) -> dict[str, object]:
         pass
 
     if result_img is None:
-        raise HTTPException(status_code=500, detail=f"Try-on did not produce an image. Status: {status_text}")
+        raise HTTPException(status_code=500, detail=f"Try-On did not produce an image. Status: {status_text}")
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     result_img.save(output_path)

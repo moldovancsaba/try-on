@@ -44,8 +44,8 @@ The current API surface is:
 
 The local queue worker surface is:
 
-- `python scripts/tryon_queue_worker.py`
-- `python scripts/tryon_queue_worker.py --once`
+- `./.venv311/bin/tryon-queue-worker scripts/tryon_queue_worker.py`
+- `./.venv311/bin/tryon-queue-worker scripts/tryon_queue_worker.py --once`
 
 ## Runtime Summary
 
@@ -113,6 +113,10 @@ Operational behavior:
 - the local Mac can be offline; queued work remains in Atlas and is picked up later
 - the worker maintains lease heartbeats, stale-lease recovery, and local runtime diagnostics
 - the worker is intended to run as a macOS `launchd` service
+- the local app and queue worker are installed as one always-on service pair
+- the worker checks app readiness before claiming a job, so it does not take online work while models are still loading
+- the worker is single-instance; starting another worker exits cleanly instead of creating parallel queue consumers
+- the try-on API itself is single-task; a second generation request is rejected while one job is rendering
 
 Required environment variables:
 
@@ -175,6 +179,9 @@ Operator control notes:
 - the worker can be forced to poll immediately with `Run Worker Now`
 - service actions are routed through `launchctl` when the managed plist is installed
 - restart or run-now actions are blocked while a queue job is actively processing
+- `workerRunning=true` and `workerJobActive=false` means the service is healthy and idle
+- process lists should show `tryon-app-server` and `tryon-queue-worker`, not anonymous `bash`/`python` service entries
+- local lock files live under `.runtime/locks/` and are runtime state, not source files
 
 Important suit-asset boundary:
 
@@ -215,14 +222,14 @@ Current canonical layout:
 Audit the shared vault and refresh the manifest:
 
 ```bash
-python scripts/audit_models.py --write-manifest
+./.venv311/bin/python scripts/audit_models.py --write-manifest
 ```
 
 Plan or run deterministic syncs from the shared-vault contract:
 
 ```bash
-python scripts/sync_models.py --profile core --plan
-python scripts/sync_models.py --profile core --write-manifest
+./.venv311/bin/python scripts/sync_models.py --profile core --plan
+./.venv311/bin/python scripts/sync_models.py --profile core --write-manifest
 ```
 
 ## What `install.sh` Seeds
@@ -375,7 +382,7 @@ Sample fields:
 
 - `workerRunning`: local worker loop process is active.
 - `workerJobActive`: worker is actively processing a job, backed by heartbeat freshness and current job id.
-- `queueCounts`: per-state queue cardinalities from Atlas (`queued`, `processing`, `retrying`, `done`, `failed`, `declined`, `archived`).
+- `queueCounts`: per-state queue cardinalities from Atlas (`queued`, `claimed`, `processing`, `uploading_result`, `notifying_camera`, `retry_wait`, `done`, `failed`).
 - `services`: app and worker process state from launchctl/pid checks.
 
 `workerRunning=true` with `workerJobActive=false` means the worker service is idle.
