@@ -124,7 +124,9 @@ Event-level setup selection (recommended):
 
 1. Camera operators change setup once per camera in UI.
 2. Camera app writes the selected `setupId` to `camera_setup_preferences`.
-3. `scripts/tryon_queue_worker.py` resolves setup for each job in order: explicit `request.setupId`, then per-camera preference from `camera_setup_preferences`, then global default setup in `tryon_setups` with `isDefault: true`, and finally fallback default setup id `default_motogp`.
+3. `scripts/tryon_queue_worker.py` resolves setup for each job in order: explicit `request.setupId`, then per-camera preference from `camera_setup_preferences`, then global default.
+4. Atlas stores only setup selection metadata (`setupId`, name, defaults, ranking); setup payloads live in local catalog file (`.config/tryon_setups.json`).
+5. If a setup is unknown locally, the job falls back to the local fallback profile.
 
 Required environment variables:
 
@@ -136,6 +138,7 @@ CAMERA_TRYON_COMPLETE_URL=https://camera.example.com/api/internal/tryon/complete
 CAMERA_TRYON_INTERNAL_SECRET=...
 TRYON_SETUP_COLLECTION=tryon_setups
 TRYON_CAMERA_SETUP_PREFERENCE_COLLECTION=camera_setup_preferences
+TRYON_SETUP_CATALOG_PATH=.config/tryon_setups.json
 TRYON_DEFAULT_SETUP_ID=default_motogp
 TRYON_QUEUE_ROOT=/Users/Shared/Projects/try-on/queue
 TRYON_SUIT_ASSET_ROOT=/Users/Shared/Projects/try-on/images
@@ -194,9 +197,9 @@ Operator control notes:
 - process lists should show `tryon-app-server` and `tryon-queue-worker`, not anonymous `bash`/`python` service entries
 - local lock files live under `.runtime/locks/` and are runtime state, not source files
 
-Setup data model and payload examples:
+Setup metadata in Atlas + local catalog:
 
-1. `tryon_setups` collection documents are presets.
+1. `tryon_setups` collection documents now store setup metadata only (not full tuning payload).
 
 ```json
 {
@@ -207,17 +210,26 @@ Setup data model and payload examples:
   "active": true,
   "isDefault": true,
   "rank": 0,
+  "revision": "motogp-high-v1",
+  "createdAt": "2026-06-03T12:00:00Z",
+  "updatedAt": "2026-06-03T12:00:00Z"
+}
+```
+
+2. `.config/tryon_setups.json` now holds the full payload (`config`) used by local worker run:
+
+```json
+{
+  "setupId": "default_motogp",
+  "name": "MotoGP High (Default)",
+  "active": true,
+  "revision": "motogp-high-v1",
   "config": {
     "processing_profile": "motogp_leather_magic",
     "category": "Upper (T-Shirts, Hoodies)",
-    "sleeve_length": "default",
-    "pant_length": "default",
-    "resolution": "High Quality",
     "steps": 60,
     "guidance": 4.6
-  },
-  "createdAt": "2026-06-03T12:00:00Z",
-  "updatedAt": "2026-06-03T12:00:00Z"
+  }
 }
 ```
 
@@ -261,7 +273,10 @@ Setup data model and payload examples:
 API:
 
 - `GET /api/tryon/setups?cameraId=<cameraId>` returns active setups filtered for the camera and global defaults.
+  - Metadata and names come from Atlas (`tryon_setups`).
+  - Config values come from `.config/tryon_setups.json` on the try-on machine.
 - `POST /api/tryon/setups/{setupId}/use` accepts `{ "cameraId": "camera_123" }` and writes preference.
+  - Selected setup is validated against local catalog and recorded both in preference and setup metadata collection.
 
 Camera completion callback is enriched with resolved setup metadata:
 

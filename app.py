@@ -34,6 +34,7 @@ from services.mongo_uri import normalize_mongodb_uri
 from services.service_manager import get_managed_services_status, perform_service_action
 from services.single_task_lock import SingleTaskLock
 from services.worker_contracts import PROCESSING_PROFILE_GENERIC, PROCESSING_PROFILE_MOTOGP, normalize_processing_profile
+from services.tryon_setups import load_local_setups
 from services.worker_runtime import append_worker_event, load_worker_status, read_recent_worker_events
 from services.worker_settings import load_worker_settings, normalize_worker_settings, save_worker_settings
 
@@ -1640,6 +1641,7 @@ if "fastapi_app" in globals():
         if not db:
             raise HTTPException(status_code=503, detail="Try-on MongoDB is not configured.")
         setup_collection_name, _ = _tryon_collection_names()
+        local_setups = load_local_setups(_ROOT)
         query = {"active": True}
         if camera_id:
             query["$or"] = [
@@ -1655,16 +1657,20 @@ if "fastapi_app" in globals():
                 setup_id = _normalize_opt_text(setup.get("setupId"))
                 if not setup_id:
                     continue
-                setup_payload = dict(setup.get("config") or {})
+                local_setup = local_setups.get(setup_id)
+                if not local_setup:
+                    continue
+                config_payload = dict(local_setup.get("config") or {})
                 setups.append(
                     {
                         "setupId": setup_id,
-                        "name": setup.get("name") or setup_id,
-                        "description": setup.get("description"),
-                        "cameraId": _normalize_opt_text(setup.get("cameraId")),
-                        "isDefault": bool(setup.get("isDefault")),
-                        "rank": int(setup.get("rank") or 0),
-                        "config": setup_payload,
+                        "name": local_setup.get("name") or setup.get("name") or setup_id,
+                        "description": local_setup.get("description") or setup.get("description"),
+                        "cameraId": _normalize_opt_text(local_setup.get("cameraId")) or _normalize_opt_text(setup.get("cameraId")),
+                        "isDefault": bool(local_setup.get("isDefault")),
+                        "rank": int(local_setup.get("rank") or setup.get("rank") or 0),
+                        "revision": local_setup.get("revision"),
+                        "config": config_payload,
                     }
                 )
             return {"cameraId": camera_id, "setups": setups}
@@ -1684,9 +1690,28 @@ if "fastapi_app" in globals():
         if not db:
             raise HTTPException(status_code=503, detail="Try-on MongoDB is not configured.")
         setup_collection_name, preference_collection_name = _tryon_collection_names()
-        setup = db[setup_collection_name].find_one({"setupId": setup_id, "active": True})
-        if not setup:
-            raise HTTPException(status_code=404, detail="setupId not found or inactive.")
+        local_setups = load_local_setups(_ROOT)
+        local_setup = local_setups.get(setup_id)
+        if not local_setup:
+            raise HTTPException(status_code=404, detail="setupId not found in local setup catalog.")
+        db[setup_collection_name].update_one(
+            {"setupId": setup_id},
+            {
+                "$set": {
+                    "setupId": setup_id,
+                    "name": local_setup.get("name"),
+                    "description": local_setup.get("description"),
+                    "cameraId": local_setup.get("cameraId"),
+                    "active": bool(local_setup.get("active", True)),
+                    "isDefault": bool(local_setup.get("isDefault")),
+                    "rank": int(local_setup.get("rank") or 0),
+                    "revision": local_setup.get("revision"),
+                    "updatedAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                },
+                "$setOnInsert": {"createdAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")},
+            },
+            upsert=True,
+        )
         updated_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         db[preference_collection_name].update_one(
             {"cameraId": camera_id},

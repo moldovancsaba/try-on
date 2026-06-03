@@ -16,7 +16,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 import requests
-from pymongo import MongoClient, ReturnDocument
+from pymongo import MongoClient, ReturnDocument, UpdateOne
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
@@ -40,28 +40,7 @@ PUBLICATION_STATE_CAMERA_NOTIFIED = "camera_notified"
 TRYON_SETUP_COLLECTION = "tryon_setups"
 TRYON_SETUP_PREFERENCES_COLLECTION = "camera_setup_preferences"
 TRYON_DEFAULT_SETUP_ID = "default_motogp"
-TRYON_SETUP_FIELD_ALLOWLIST = {
-    "processing_profile",
-    "category",
-    "sleeve_length",
-    "pant_length",
-    "resolution",
-    "steps",
-    "guidance",
-    "seed",
-    "show_mask",
-    "mask_sharpness",
-    "mask_padding",
-    "detail_boost",
-    "face_restore_strength",
-    "preserve_head",
-    "lock_seed",
-    "use_vae_hf",
-    "sampler_name",
-    "composite_strength",
-    "enable_deep_texture",
-    "warp_strength",
-}
+from services.tryon_setups import TRYON_SETUP_FIELD_ALLOWLIST, load_local_setups
 
 
 def now_iso() -> str:
@@ -115,6 +94,7 @@ class WorkerConfig:
     setup_collection: str
     setup_preference_collection: str
     default_setup_id: str
+    setup_catalog_path: str
 
 
 def load_env_file(path: Path) -> None:
@@ -188,6 +168,7 @@ def load_config() -> WorkerConfig:
         setup_collection=(os.getenv("TRYON_SETUP_COLLECTION") or TRYON_SETUP_COLLECTION).strip(),
         setup_preference_collection=(os.getenv("TRYON_CAMERA_SETUP_PREFERENCE_COLLECTION") or TRYON_SETUP_PREFERENCES_COLLECTION).strip(),
         default_setup_id=(os.getenv("TRYON_DEFAULT_SETUP_ID") or TRYON_DEFAULT_SETUP_ID).strip(),
+        setup_catalog_path=(os.getenv("TRYON_SETUP_CATALOG_PATH") or "").strip(),
     )
 
 
@@ -241,18 +222,103 @@ class TryOnQueueWorker:
         self.suits = self.db["leather_suits"]
         self.setups = self.db[config.setup_collection]
         self.camera_setup_preferences = self.db[config.setup_preference_collection]
+        self.local_setups = load_local_setups(REPO_ROOT, catalog_path=config.setup_catalog_path)
         self.current_job_id: str | None = None
+        self._sync_local_setups_to_mongo()
         self.ensure_default_setup_exists()
 
     def _normalize_setup_id(self, value: str | None) -> str | None:
         text = (value or "").strip()
         return text or None
 
+    def _setup_sort_key(self, setup: dict[str, Any]) -> tuple[int, str]:
+        return (int(setup.get("rank") or 0), str(setup.get("setupId") or ""))
+
+    def _load_local_setup(self, setup_id: str | None) -> dict[str, Any] | None:
+        setup = self.local_setups.get(self._normalize_setup_id(setup_id) or "")
+        if not setup:
+            return None
+        if not bool(setup.get("active", True)):
+            return None
+        return setup
+
     def _load_setup_by_id(self, setup_id: str | None) -> dict[str, Any] | None:
         normalized = self._normalize_setup_id(setup_id)
         if not normalized:
             return None
-        return self.setups.find_one({"setupId": normalized, "active": True})
+        local_setup = self._load_local_setup(normalized)
+        if local_setup:
+            return local_setup
+
+        setup = self.setups.find_one({"setupId": normalized, "active": True})
+        if not setup:
+            return None
+
+        camera_id = setup.get("cameraId")
+        return {
+            "setupId": normalized,
+            "name": str(setup.get("name") or normalized),
+            "description": str(setup.get("description") or ""),
+            "active": bool(setup.get("active", True)),
+            "isDefault": bool(setup.get("isDefault")),
+            "cameraId": self._normalize_setup_id(str(camera_id)) if camera_id not in (None, "") else None,
+            "rank": int(setup.get("rank") or 0),
+            "revision": self._normalize_setup_id(str(setup.get("revision") or "")),
+            "config": {},
+        }
+
+    def _load_local_default_setup(self, camera_id: str | None, *, allow_camera: bool) -> dict[str, Any] | None:
+        normalized_camera = self._normalize_setup_id(camera_id) if allow_camera else None
+        candidates = [
+            setup
+            for setup in self.local_setups.values()
+            if bool(setup.get("active", True))
+            and bool(setup.get("isDefault"))
+            and (
+                (allow_camera and self._normalize_setup_id(str(setup.get("cameraId") or "")) == normalized_camera)
+                or (not allow_camera and not self._normalize_setup_id(str(setup.get("cameraId") or "")))
+            )
+        ]
+        if not candidates:
+            return None
+        return sorted(candidates, key=self._setup_sort_key)[0]
+
+    def _sync_local_setups_to_mongo(self) -> None:
+        now = now_iso()
+        operations: list[UpdateOne] = []
+
+        for setup in self.local_setups.values():
+            setup_id = self._normalize_setup_id(setup.get("setupId"))
+            if not setup_id or not bool(setup.get("active", True)):
+                continue
+
+            payload = {
+                "name": str(setup.get("name") or setup_id),
+                "description": self._normalize_setup_id(str(setup.get("description") or "")),
+                "cameraId": self._normalize_setup_id(str(setup.get("cameraId") or "")),
+                "active": True,
+                "isDefault": bool(setup.get("isDefault")),
+                "rank": int(setup.get("rank") or 0),
+                "updatedAt": now,
+            }
+            payload["description"] = payload["description"] or None
+            revision = self._normalize_setup_id(str(setup.get("revision") or ""))
+            if revision:
+                payload["revision"] = revision
+
+            operations.append(
+                UpdateOne(
+                    {"setupId": setup_id},
+                    {
+                        "$set": payload,
+                        "$setOnInsert": {"createdAt": now},
+                    },
+                    upsert=True,
+                )
+            )
+
+        if operations:
+            self.setups.bulk_write(operations, ordered=False)
 
     def _load_last_camera_setup(self, camera_id: str | None) -> dict[str, Any] | None:
         normalized = self._normalize_setup_id(camera_id)
@@ -265,12 +331,19 @@ class TryOnQueueWorker:
             if setup:
                 return setup
 
+        local_camera_default = self._load_local_default_setup(normalized, allow_camera=True)
+        if local_camera_default:
+            return local_camera_default
+
         return self.setups.find_one(
             {"cameraId": normalized, "active": True, "isDefault": True},
             sort=[("rank", 1)],
         )
 
     def _load_global_default_setup(self) -> dict[str, Any] | None:
+        local_default = self._load_local_default_setup(None, allow_camera=False)
+        if local_default:
+            return local_default
         return self.setups.find_one(
             {
                 "active": True,
@@ -307,6 +380,7 @@ class TryOnQueueWorker:
         return {
             "setupId": setup_id,
             "name": str(setup.get("name") or setup_id),
+            "revision": setup.get("revision"),
             "config": config,
             "payload": payload,
             "isDefault": bool(setup.get("isDefault")),
@@ -345,6 +419,7 @@ class TryOnQueueWorker:
             "setupId": TRYON_DEFAULT_SETUP_ID,
             "name": "Fallback legacy setup",
             "isDefault": True,
+            "revision": "legacy-fallback",
             "config": {"processing_profile": PROCESSING_PROFILE_MOTOGP},
             "payload": {
                 "person_image_path": None,
@@ -365,15 +440,25 @@ class TryOnQueueWorker:
             "active": True,
             "isDefault": True,
             "rank": 0,
-            "config": {
-                "processing_profile": PROCESSING_PROFILE_MOTOGP,
-            },
+            "revision": "legacy-fallback",
             "createdAt": now,
             "updatedAt": now,
         }
         self.setups.update_one(
             {"setupId": self.config.default_setup_id},
-            {"$setOnInsert": fallback},
+            {
+                "$setOnInsert": {
+                    "setupId": self.config.default_setup_id,
+                    "name": fallback["name"],
+                    "description": fallback["description"],
+                    "active": True,
+                    "isDefault": True,
+                    "rank": 0,
+                    "revision": "legacy-fallback",
+                    "createdAt": now,
+                    "updatedAt": now,
+                },
+            },
             upsert=True,
         )
 
@@ -615,6 +700,7 @@ class TryOnQueueWorker:
         setup_id = str((latest_job.get("processing") or {}).get("resolvedSetupId") or TRYON_DEFAULT_SETUP_ID)
         setup_source = str((latest_job.get("processing") or {}).get("resolvedSetupSource") or "legacy")
         setup_profile = str((latest_job.get("processing") or {}).get("resolvedSetupProfile") or PROCESSING_PROFILE_MOTOGP)
+        setup_revision = str((latest_job.get("processing") or {}).get("resolvedSetupRevision") or "")
         latest_job = self._refresh_job(job_id)
         if self._is_camera_notified(latest_job):
             self._clear_publication_error(job_id)
@@ -635,6 +721,7 @@ class TryOnQueueWorker:
             setup_id=setup_id,
             setup_source=setup_source,
             processing_profile=setup_profile,
+            setup_revision=setup_revision,
         )
         now = now_iso()
         self._mark_camera_notified(job_id, now)
@@ -786,6 +873,7 @@ class TryOnQueueWorker:
         setup_id: str,
         setup_source: str,
         processing_profile: str,
+        setup_revision: str | None = None,
     ) -> None:
         response = requests.post(
             self.config.camera_complete_url,
@@ -799,6 +887,7 @@ class TryOnQueueWorker:
                     "processingProfile": processing_profile,
                     "resolvedSetupId": setup_id,
                     "setupSource": setup_source,
+                    "resolvedSetupRevision": setup_revision,
                 },
             },
             headers={"x-camera-tryon-secret": self.config.camera_internal_secret},
@@ -837,6 +926,7 @@ class TryOnQueueWorker:
             payload = setup_payload["payload"]
             resolved_setup_id = setup_payload["setupId"]
             resolved_setup_name = setup_payload.get("name")
+            resolved_setup_revision = setup_payload.get("revision")
             processing_profile = str(payload.get("processing_profile") or PROCESSING_PROFILE_MOTOGP)
             if request_camera_id := self._normalize_setup_id(str((job.get("source") or {}).get("cameraId") or (job.get("request") or {}).get("cameraId") or "")):
                 self._mark_camera_last_setup(request_camera_id, resolved_setup_id)
@@ -847,6 +937,7 @@ class TryOnQueueWorker:
                         "processing.resolvedSetupId": resolved_setup_id,
                         "processing.resolvedSetupName": resolved_setup_name,
                         "processing.resolvedSetupSource": setup_source,
+                        "processing.resolvedSetupRevision": resolved_setup_revision,
                         "processing.resolvedSetupProfile": processing_profile,
                     }
                 },
