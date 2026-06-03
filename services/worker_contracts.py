@@ -45,6 +45,13 @@ def validate_job_document(job: dict[str, Any]) -> list[str]:
     request = job.get("request") or {}
     if not str(request.get("leatherSuitId") or "").strip():
         errors.append("missing_leather_suit_id")
+    # New optional fields used by the Mongo-backed setup resolver.
+    setup_id = request.get("setupId")
+    if setup_id is not None and not str(setup_id).strip():
+        errors.append("invalid_setup_id")
+    camera_id = request.get("cameraId")
+    if camera_id is not None and not str(camera_id).strip():
+        errors.append("invalid_camera_id")
     profile = normalize_processing_profile(request.get("processingProfile"))
     if request.get("processingProfile") not in (None, "", profile):
         # Unsupported names fall back to generic, but explicit unknown values should still be visible.

@@ -45,6 +45,7 @@ def test_mongodb(uri: str, db_name: str) -> bool:
         db = client[db_name]
         db["tryon_jobs"].estimated_document_count()
         db["leather_suits"].estimated_document_count()
+        db[os.getenv("TRYON_SETUP_COLLECTION") or "tryon_setups"].estimated_document_count()
         return print_result(True, "MongoDB Atlas", f"connected to database `{db_name}`")
     except Exception as error:  # pragma: no cover - operational check
         return print_result(False, "MongoDB Atlas", str(error))

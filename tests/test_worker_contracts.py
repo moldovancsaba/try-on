@@ -30,6 +30,21 @@ class WorkerContractTests(unittest.TestCase):
         )
         self.assertEqual(errors, [])
 
+    def test_validate_job_document_accepts_setup_reference(self) -> None:
+        errors = validate_job_document(
+            {
+                "jobId": "job_2",
+                "status": "queued",
+                "source": {"submissionId": "sub_1", "imageUrl": "https://example.com/image.png", "cameraId": "camera_a"},
+                "request": {
+                    "leatherSuitId": "suit_1",
+                    "setupId": "setup_motogp_main",
+                    "processingProfile": PROCESSING_PROFILE_MOTOGP,
+                },
+            }
+        )
+        self.assertEqual(errors, [])
+
     def test_validate_job_document_flags_missing_fields(self) -> None:
         errors = validate_job_document({"status": "queued", "source": {}, "request": {}})
         self.assertIn("missing_job_id", errors)

@@ -24,7 +24,6 @@ if str(REPO_ROOT) not in sys.path:
 
 from services.worker_contracts import (
     PROCESSING_PROFILE_MOTOGP,
-    normalize_processing_profile,
     validate_job_document,
     validate_suit_document,
 )
@@ -38,6 +37,31 @@ UTC = timezone.utc
 PIPELINE_VERSION = "1.1.0"
 PUBLICATION_STATE_UPLOADED = "uploaded"
 PUBLICATION_STATE_CAMERA_NOTIFIED = "camera_notified"
+TRYON_SETUP_COLLECTION = "tryon_setups"
+TRYON_SETUP_PREFERENCES_COLLECTION = "camera_setup_preferences"
+TRYON_DEFAULT_SETUP_ID = "default_motogp"
+TRYON_SETUP_FIELD_ALLOWLIST = {
+    "processing_profile",
+    "category",
+    "sleeve_length",
+    "pant_length",
+    "resolution",
+    "steps",
+    "guidance",
+    "seed",
+    "show_mask",
+    "mask_sharpness",
+    "mask_padding",
+    "detail_boost",
+    "face_restore_strength",
+    "preserve_head",
+    "lock_seed",
+    "use_vae_hf",
+    "sampler_name",
+    "composite_strength",
+    "enable_deep_texture",
+    "warp_strength",
+}
 
 
 def now_iso() -> str:
@@ -88,6 +112,9 @@ class WorkerConfig:
     imgbb_api_key: str
     camera_complete_url: str
     camera_internal_secret: str
+    setup_collection: str
+    setup_preference_collection: str
+    default_setup_id: str
 
 
 def load_env_file(path: Path) -> None:
@@ -158,6 +185,9 @@ def load_config() -> WorkerConfig:
         imgbb_api_key=imgbb_api_key,
         camera_complete_url=camera_complete_url,
         camera_internal_secret=camera_internal_secret,
+        setup_collection=(os.getenv("TRYON_SETUP_COLLECTION") or TRYON_SETUP_COLLECTION).strip(),
+        setup_preference_collection=(os.getenv("TRYON_CAMERA_SETUP_PREFERENCE_COLLECTION") or TRYON_SETUP_PREFERENCES_COLLECTION).strip(),
+        default_setup_id=(os.getenv("TRYON_DEFAULT_SETUP_ID") or TRYON_DEFAULT_SETUP_ID).strip(),
     )
 
 
@@ -209,7 +239,143 @@ class TryOnQueueWorker:
         self.db = self.mongo[config.mongodb_db_name]
         self.jobs = self.db["tryon_jobs"]
         self.suits = self.db["leather_suits"]
+        self.setups = self.db[config.setup_collection]
+        self.camera_setup_preferences = self.db[config.setup_preference_collection]
         self.current_job_id: str | None = None
+        self.ensure_default_setup_exists()
+
+    def _normalize_setup_id(self, value: str | None) -> str | None:
+        text = (value or "").strip()
+        return text or None
+
+    def _load_setup_by_id(self, setup_id: str | None) -> dict[str, Any] | None:
+        normalized = self._normalize_setup_id(setup_id)
+        if not normalized:
+            return None
+        return self.setups.find_one({"setupId": normalized, "active": True})
+
+    def _load_last_camera_setup(self, camera_id: str | None) -> dict[str, Any] | None:
+        normalized = self._normalize_setup_id(camera_id)
+        if not normalized:
+            return None
+        preference = self.camera_setup_preferences.find_one({"cameraId": normalized})
+        setup_id = self._normalize_setup_id(preference.get("setupId") if preference else None)
+        if setup_id:
+            setup = self._load_setup_by_id(setup_id)
+            if setup:
+                return setup
+
+        return self.setups.find_one(
+            {"cameraId": normalized, "active": True, "isDefault": True},
+            sort=[("rank", 1)],
+        )
+
+    def _load_global_default_setup(self) -> dict[str, Any] | None:
+        return self.setups.find_one(
+            {
+                "active": True,
+                "isDefault": True,
+                "$or": [{"cameraId": {"$exists": False}}, {"cameraId": None}],
+            },
+            sort=[("rank", 1)],
+        )
+
+    def _mark_camera_last_setup(self, camera_id: str | None, setup_id: str) -> None:
+        normalized = self._normalize_setup_id(camera_id)
+        normalized_setup = self._normalize_setup_id(setup_id)
+        if not normalized or not normalized_setup:
+            return
+        self.camera_setup_preferences.update_one(
+            {"cameraId": normalized},
+            {"$set": {"cameraId": normalized, "setupId": normalized_setup, "updatedAt": now_iso()}},
+            upsert=True,
+        )
+
+    def _coerce_setup_metadata(self, setup: dict[str, Any]) -> dict[str, Any]:
+        setup_id = self._normalize_setup_id(setup.get("setupId")) or "legacy_fallback"
+        config = setup.get("config") if isinstance(setup.get("config"), dict) else {}
+        payload = {
+            "person_image_path": None,
+            "garment_image_path": None,
+            "output_image_path": None,
+            "processing_profile": PROCESSING_PROFILE_MOTOGP,
+        }
+        for key in TRYON_SETUP_FIELD_ALLOWLIST:
+            if key in config:
+                payload[key] = config[key]
+        payload["processing_profile"] = str(payload["processing_profile"]).strip() or PROCESSING_PROFILE_MOTOGP
+        return {
+            "setupId": setup_id,
+            "name": str(setup.get("name") or setup_id),
+            "config": config,
+            "payload": payload,
+            "isDefault": bool(setup.get("isDefault")),
+        }
+
+    def resolve_setup(self, job: dict[str, Any]) -> tuple[dict[str, Any], str]:
+        request = job.get("request") or {}
+        source = job.get("source") or {}
+        camera_id = self._normalize_setup_id(str(source.get("cameraId") or request.get("cameraId") or ""))
+
+        requested_setup_id = self._normalize_setup_id(str(request.get("setupId") or ""))
+        if requested_setup_id:
+            requested_setup = self._load_setup_by_id(requested_setup_id)
+            if requested_setup:
+                self._mark_camera_last_setup(camera_id, requested_setup_id)
+                return self._coerce_setup_metadata(requested_setup), "job.assigned"
+            self.emit_event(
+                level="warn",
+                event="invalid_setup_reference",
+                status="processing",
+                stage="normalizing_job",
+                details={"requestedSetupId": requested_setup_id},
+            )
+
+        if camera_id:
+            camera_setup = self._load_last_camera_setup(camera_id)
+            if camera_setup:
+                return self._coerce_setup_metadata(camera_setup), "camera.last"
+
+        default_setup = self._load_global_default_setup()
+        if default_setup:
+            return self._coerce_setup_metadata(default_setup), "global.default"
+
+        # Compatibility fallback for older jobs without setup references.
+        return {
+            "setupId": TRYON_DEFAULT_SETUP_ID,
+            "name": "Fallback legacy setup",
+            "isDefault": True,
+            "config": {"processing_profile": PROCESSING_PROFILE_MOTOGP},
+            "payload": {
+                "person_image_path": None,
+                "garment_image_path": None,
+                "output_image_path": None,
+                "processing_profile": PROCESSING_PROFILE_MOTOGP,
+            },
+        }, "legacy"
+
+    def ensure_default_setup_exists(self) -> None:
+        now = now_iso()
+        if self._load_setup_by_id(self.config.default_setup_id):
+            return
+        fallback = {
+            "setupId": self.config.default_setup_id,
+            "name": "MotoGP default",
+            "description": "Default processing setup for local MotoGP leather try-on.",
+            "active": True,
+            "isDefault": True,
+            "rank": 0,
+            "config": {
+                "processing_profile": PROCESSING_PROFILE_MOTOGP,
+            },
+            "createdAt": now,
+            "updatedAt": now,
+        }
+        self.setups.update_one(
+            {"setupId": self.config.default_setup_id},
+            {"$setOnInsert": fallback},
+            upsert=True,
+        )
 
     def emit_event(self, *, level: str, event: str, status: str, stage: str, job_id: str | None = None, details: dict[str, Any] | None = None) -> None:
         append_worker_event(
@@ -268,15 +434,21 @@ class TryOnQueueWorker:
         job = self.jobs.find_one_and_update(
             {
                 "status": {"$in": ["queued", "retry_wait"]},
-                "$or": [
-                    {"processing.nextAttemptAt": {"$exists": False}},
-                    {"processing.nextAttemptAt": None},
-                    {"processing.nextAttemptAt": {"$lte": now}},
-                ],
-                "$or": [
-                    {"processing.leaseExpiresAt": None},
-                    {"processing.leaseExpiresAt": {"$exists": False}},
-                    {"processing.leaseExpiresAt": {"$lt": now}},
+                "$and": [
+                    {
+                        "$or": [
+                            {"processing.nextAttemptAt": {"$exists": False}},
+                            {"processing.nextAttemptAt": None},
+                            {"processing.nextAttemptAt": {"$lte": now}},
+                        ]
+                    },
+                    {
+                        "$or": [
+                            {"processing.leaseExpiresAt": None},
+                            {"processing.leaseExpiresAt": {"$exists": False}},
+                            {"processing.leaseExpiresAt": {"$lt": now}},
+                        ]
+                    },
                 ],
             },
             {
@@ -440,6 +612,10 @@ class TryOnQueueWorker:
 
     def ensure_camera_notified(self, job_id: str, upload: dict[str, Any]) -> bool:
         latest_job = self._refresh_job(job_id)
+        setup_id = str((latest_job.get("processing") or {}).get("resolvedSetupId") or TRYON_DEFAULT_SETUP_ID)
+        setup_source = str((latest_job.get("processing") or {}).get("resolvedSetupSource") or "legacy")
+        setup_profile = str((latest_job.get("processing") or {}).get("resolvedSetupProfile") or PROCESSING_PROFILE_MOTOGP)
+        latest_job = self._refresh_job(job_id)
         if self._is_camera_notified(latest_job):
             self._clear_publication_error(job_id)
             self.emit_event(
@@ -453,7 +629,13 @@ class TryOnQueueWorker:
             return False
 
         self.update_stage(job_id, "notifying_camera", "notifying_camera")
-        self.notify_camera_completion(job_id, upload)
+        self.notify_camera_completion(
+            job_id,
+            upload,
+            setup_id=setup_id,
+            setup_source=setup_source,
+            processing_profile=setup_profile,
+        )
         now = now_iso()
         self._mark_camera_notified(job_id, now)
         self.emit_event(
@@ -546,13 +728,11 @@ class TryOnQueueWorker:
         shutil.copyfile(local_asset, destination)
         return str(local_asset)
 
-    def call_local_tryon_api(self, person_input_path: Path, suit_input_path: Path, output_path: Path, processing_profile: str) -> dict[str, Any]:
-        payload = {
-            "person_image_path": str(person_input_path),
-            "garment_image_path": str(suit_input_path),
-            "output_image_path": str(output_path),
-            "processing_profile": processing_profile,
-        }
+    def call_local_tryon_api(self, person_input_path: Path, suit_input_path: Path, output_path: Path, payload: dict[str, Any]) -> dict[str, Any]:
+        payload = dict(payload)
+        payload["person_image_path"] = str(person_input_path)
+        payload["garment_image_path"] = str(suit_input_path)
+        payload["output_image_path"] = str(output_path)
         response = requests.post(
             self.config.local_tryon_api_url,
             json=payload,
@@ -598,7 +778,15 @@ class TryOnQueueWorker:
             raise RuntimeError("imgbb_upload_missing_url")
         return {"imageUrl": image_url, "deleteUrl": data.get("delete_url")}
 
-    def notify_camera_completion(self, job_id: str, upload: dict[str, Any]) -> None:
+    def notify_camera_completion(
+        self,
+        job_id: str,
+        upload: dict[str, Any],
+        *,
+        setup_id: str,
+        setup_source: str,
+        processing_profile: str,
+    ) -> None:
         response = requests.post(
             self.config.camera_complete_url,
             json={
@@ -606,7 +794,12 @@ class TryOnQueueWorker:
                 "publicResultUrl": upload["imageUrl"],
                 "deleteUrl": upload.get("deleteUrl"),
                 "workerId": self.config.worker_id,
-                "processorMeta": {"pipelineVersion": PIPELINE_VERSION, "processingProfile": PROCESSING_PROFILE_MOTOGP},
+                "processorMeta": {
+                    "pipelineVersion": PIPELINE_VERSION,
+                    "processingProfile": processing_profile,
+                    "resolvedSetupId": setup_id,
+                    "setupSource": setup_source,
+                },
             },
             headers={"x-camera-tryon-secret": self.config.camera_internal_secret},
             timeout=60,
@@ -639,19 +832,25 @@ class TryOnQueueWorker:
             job_errors = validate_job_document(job)
             if job_errors:
                 raise RuntimeError(",".join(job_errors))
-            raw_processing_profile = (job.get("request") or {}).get("processingProfile")
-            processing_profile = normalize_processing_profile(raw_processing_profile)
-            if processing_profile != PROCESSING_PROFILE_MOTOGP:
-                if str(raw_processing_profile or "").strip():
-                    raise RuntimeError("invalid_processing_profile")
-                processing_profile = PROCESSING_PROFILE_MOTOGP
-                self.emit_event(
-                    level="warn",
-                    event="legacy_processing_profile_fallback",
-                    status="processing",
-                    stage="normalizing_job",
-                    job_id=job_id,
-                )
+
+            setup_payload, setup_source = self.resolve_setup(job)
+            payload = setup_payload["payload"]
+            resolved_setup_id = setup_payload["setupId"]
+            resolved_setup_name = setup_payload.get("name")
+            processing_profile = str(payload.get("processing_profile") or PROCESSING_PROFILE_MOTOGP)
+            if request_camera_id := self._normalize_setup_id(str((job.get("source") or {}).get("cameraId") or (job.get("request") or {}).get("cameraId") or "")):
+                self._mark_camera_last_setup(request_camera_id, resolved_setup_id)
+            self.jobs.update_one(
+                {"jobId": job_id},
+                {
+                    "$set": {
+                        "processing.resolvedSetupId": resolved_setup_id,
+                        "processing.resolvedSetupName": resolved_setup_name,
+                        "processing.resolvedSetupSource": setup_source,
+                        "processing.resolvedSetupProfile": processing_profile,
+                    }
+                },
+            )
 
             existing_job = self._refresh_job(job_id)
             if existing_job and self._is_camera_notified(existing_job):
@@ -721,6 +920,9 @@ class TryOnQueueWorker:
                         "sourceImageUrl": redact_url(job["source"]["imageUrl"]),
                         "resolvedSuitAssetPath": redact_url(resolved_suit_source),
                         "processingProfile": processing_profile,
+                        "setupId": resolved_setup_id,
+                        "setupName": resolved_setup_name,
+                        "setupSource": setup_source,
                         "createdAt": now_iso(),
                     },
                     indent=2,
@@ -729,7 +931,7 @@ class TryOnQueueWorker:
             )
 
             self.update_stage(job_id, "processing", "running_tryon")
-            api_result = self.call_local_tryon_api(person_input_path, suit_input_path, result_path, processing_profile)
+            api_result = self.call_local_tryon_api(person_input_path, suit_input_path, result_path, payload)
             append_log(log_path, json.dumps({"stage": "running_tryon", "response": api_result}))
             upload = self.ensure_published_result(job_id, result_path, job_snapshot=job)
             self.ensure_camera_notified(job_id, upload)

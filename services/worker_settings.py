@@ -7,8 +7,8 @@ from typing import Any
 from model_paths import ensure_app_config_dir, get_app_root
 
 
-DEFAULT_POLL_INTERVAL_SECONDS = 300
-ALLOWED_POLL_INTERVAL_SECONDS = (180, 240, 300)
+DEFAULT_POLL_INTERVAL_SECONDS = 60
+ALLOWED_POLL_INTERVAL_SECONDS = (60, 120, 180, 240, 300)
 DEFAULT_WORKER_SETTINGS = {
     "enabled": True,
     "pollIntervalSeconds": DEFAULT_POLL_INTERVAL_SECONDS,

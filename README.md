@@ -39,6 +39,8 @@ The current API surface is:
 - `GET /api/worker/settings`
 - `POST /api/worker/settings`
 - `POST /api/worker/service-action`
+- `GET /api/tryon/setups`
+- `POST /api/tryon/setups/{setupId}/use`
 - `POST /upload_garment`
 - `POST /save_package`
 
@@ -118,6 +120,12 @@ Operational behavior:
 - the worker is single-instance; starting another worker exits cleanly instead of creating parallel queue consumers
 - the try-on API itself is single-task; a second generation request is rejected while one job is rendering
 
+Event-level setup selection (recommended):
+
+1. Camera operators change setup once per camera in UI.
+2. Camera app writes the selected `setupId` to `camera_setup_preferences`.
+3. `scripts/tryon_queue_worker.py` resolves setup for each job in order: explicit `request.setupId`, then per-camera preference from `camera_setup_preferences`, then global default setup in `tryon_setups` with `isDefault: true`, and finally fallback default setup id `default_motogp`.
+
 Required environment variables:
 
 ```bash
@@ -126,6 +134,9 @@ MONGODB_DB_NAME=...
 IMGBB_API_KEY=...
 CAMERA_TRYON_COMPLETE_URL=https://camera.example.com/api/internal/tryon/complete
 CAMERA_TRYON_INTERNAL_SECRET=...
+TRYON_SETUP_COLLECTION=tryon_setups
+TRYON_CAMERA_SETUP_PREFERENCE_COLLECTION=camera_setup_preferences
+TRYON_DEFAULT_SETUP_ID=default_motogp
 TRYON_QUEUE_ROOT=/Users/Shared/Projects/try-on/queue
 TRYON_SUIT_ASSET_ROOT=/Users/Shared/Projects/try-on/images
 TRYON_LOCAL_API_URL=http://127.0.0.1:7860/api/tryon/run
@@ -134,7 +145,7 @@ TRYON_ALLOWED_SUIT_SOURCE_HOSTS=i.ibb.co
 TRYON_MAX_SOURCE_IMAGE_BYTES=26214400
 TRYON_MAX_SUIT_IMAGE_BYTES=26214400
 TRYON_ALLOW_REDIRECTS=false
-TRYON_POLL_INTERVAL_SECONDS=300
+TRYON_POLL_INTERVAL_SECONDS=60
 TRYON_LEASE_DURATION_SECONDS=600
 TRYON_MAX_ATTEMPTS=3
 ```
@@ -182,6 +193,81 @@ Operator control notes:
 - `workerRunning=true` and `workerJobActive=false` means the service is healthy and idle
 - process lists should show `tryon-app-server` and `tryon-queue-worker`, not anonymous `bash`/`python` service entries
 - local lock files live under `.runtime/locks/` and are runtime state, not source files
+
+Setup data model and payload examples:
+
+1. `tryon_setups` collection documents are presets.
+
+```json
+{
+  "setupId": "default_motogp",
+  "name": "MotoGP Default",
+  "description": "Default high-detail leather route",
+  "cameraId": null,
+  "active": true,
+  "isDefault": true,
+  "rank": 0,
+  "config": {
+    "processing_profile": "motogp_leather_magic",
+    "category": "Upper (T-Shirts, Hoodies)",
+    "sleeve_length": "default",
+    "pant_length": "default",
+    "resolution": "High Quality",
+    "steps": 60,
+    "guidance": 4.6
+  },
+  "createdAt": "2026-06-03T12:00:00Z",
+  "updatedAt": "2026-06-03T12:00:00Z"
+}
+```
+
+2. `camera_setup_preferences` stores last selected setup per camera.
+
+```json
+{
+  "cameraId": "camera_123",
+  "setupId": "default_motogp",
+  "updatedAt": "2026-06-03T12:00:00Z"
+}
+```
+
+3. Camera job should only pass lean payload:
+
+```json
+{
+  "jobId": "job_001",
+  "source": {
+    "submissionId": "sub_001",
+    "cameraId": "camera_123",
+    "imageUrl": "https://..."
+  },
+  "request": {
+    "leatherSuitId": "suit_42"
+  }
+}
+```
+
+4. If a specific image must force a setup, add `request.setupId`.
+
+```json
+{
+  "request": {
+    "leatherSuitId": "suit_42",
+    "setupId": "setup_motogp_soft"
+  }
+}
+```
+
+API:
+
+- `GET /api/tryon/setups?cameraId=<cameraId>` returns active setups filtered for the camera and global defaults.
+- `POST /api/tryon/setups/{setupId}/use` accepts `{ "cameraId": "camera_123" }` and writes preference.
+
+Camera completion callback is enriched with resolved setup metadata:
+
+- `resolvedSetupId`
+- `setupSource` (`job.assigned`, `camera.last`, `global.default`, `legacy`)
+- resolved processing profile
 
 Important suit-asset boundary:
 

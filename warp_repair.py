@@ -5,6 +5,8 @@ from skimage.transform import PiecewiseAffineTransform, ProjectiveTransform, war
 
 
 _COMPLEXITY_BAILOUT_THRESHOLD = 0.35
+_DETAIL_EDGE_BAILOUT_THRESHOLD = 0.045
+_DETAIL_LAPLACIAN_BAILOUT = 0.075
 
 
 def _garment_complexity_score(cloth_pil: Image.Image) -> float:
@@ -20,10 +22,24 @@ def _garment_complexity_score(cloth_pil: Image.Image) -> float:
     return min(float(std_per_channel.mean()) / 128.0, 1.0)
 
 
+def _texture_detail_score(cloth_pil: Image.Image) -> tuple[float, float]:
+    """
+    Measure whether the garment image is detail-dense enough to make warp-based
+    texture transfer likely to misalign logos or print text.
+    """
+    cloth_np = np.asarray(cloth_pil.convert("RGB"))
+    gray = cv2.cvtColor(cloth_np, cv2.COLOR_RGB2GRAY)
+    edges = cv2.Canny(gray, 65, 175)
+    edge_ratio = float(edges.mean()) / 255.0
+    lap = np.abs(cv2.Laplacian(gray, cv2.CV_16S, ksize=3)).astype(np.float32)
+    lap_ratio = float(lap.mean()) / 255.0
+    return edge_ratio, lap_ratio
+
+
 def _resize_mask(mask_pil: Image.Image, target_shape: tuple[int, int]) -> np.ndarray:
     mask_np = np.asarray(mask_pil.convert("L"))
     if mask_np.shape[:2] != target_shape:
-        mask_np = cv2.resize(mask_np, (target_shape[1], target_shape[0]))
+        mask_np = cv2.resize(mask_np, (target_shape[1], target_shape[0]), interpolation=cv2.INTER_NEAREST)
     return mask_np
 
 
@@ -53,12 +69,21 @@ def texture_repair_pass(
 
     print("[VFX] Initiating TPS Deep Texture Sync...")
     complexity = _garment_complexity_score(cloth_pil)
+    edge_ratio, lap_ratio = _texture_detail_score(cloth_pil)
     print(f"[VFX] Garment complexity score: {complexity:.2f}")
+    print(f"[VFX] Edge ratio: {edge_ratio:.3f}, Laplacian ratio: {lap_ratio:.3f}")
 
     if complexity >= _COMPLEXITY_BAILOUT_THRESHOLD:
         print(
-            "[VFX] Complex garment detected; skipping texture warp to avoid "
-            "pattern scrambling and mask-edge ghosting."
+            "[VFX] High-variance garment texture detected; skipping texture warp "
+            "to preserve branding and typography."
+        )
+        return result_pil
+
+    if edge_ratio >= _DETAIL_EDGE_BAILOUT_THRESHOLD or lap_ratio >= _DETAIL_LAPLACIAN_BAILOUT:
+        print(
+            "[VFX] Fine-detail garment detected; skipping texture warp to preserve "
+            "logos and small print features."
         )
         return result_pil
 
@@ -99,18 +124,13 @@ def texture_repair_pass(
     dst_inliers = dst_pts[inlier_mask]
 
     if len(src_inliers) < 6:
-        print("[VFX] Falling back to bounding-box anchors.")
-        coords_cloth = cv2.findNonZero(torso_mask_cloth)
-        coords_res = cv2.findNonZero(mask_np)
-        if coords_cloth is None or coords_res is None:
-            return result_pil
+        print(
+            "[VFX] TPS Warp skipped: insufficient stable feature anchors. "
+            "Keeping generated output to avoid brand drift."
+        )
+        return result_pil
 
-        x1, y1, w1, h1 = cv2.boundingRect(coords_cloth)
-        x2, y2, w2, h2 = cv2.boundingRect(coords_res)
-        src_inliers = np.float32([[x1, y1], [x1 + w1, y1], [x1 + w1, y1 + h1], [x1, y1 + h1]])
-        dst_inliers = np.float32([[x2, y2], [x2 + w2, y2], [x2 + w2, y2 + h2], [x2, y2 + h2]])
-    else:
-        print(f"[VFX] Anchored {len(src_inliers)} spatial geometry points on torso.")
+    print(f"[VFX] Anchored {len(src_inliers)} spatial geometry points on torso.")
 
     transform = ProjectiveTransform() if len(src_inliers) == 4 else PiecewiseAffineTransform()
 
@@ -127,7 +147,7 @@ def texture_repair_pass(
         return result_pil
 
     warped_pil = Image.fromarray(warped_cloth)
-    blurred_warped = warped_pil.filter(ImageFilter.GaussianBlur(radius=7))
+    blurred_warped = warped_pil.filter(ImageFilter.GaussianBlur(radius=4))
 
     high_freq = np.asarray(warped_pil, dtype=float) - np.asarray(blurred_warped, dtype=float)
     final_f = np.asarray(result_pil, dtype=float) + (high_freq * warp_strength)

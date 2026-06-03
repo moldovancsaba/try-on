@@ -330,6 +330,36 @@ def _build_identity_masks(mask_result: dict[str, Any], include_hair: bool = True
     }
 
 
+_DENSEPOSE_HAND_LABELS = (3, 4)
+
+
+def _build_hand_preserve_mask(mask_result: dict[str, Any]) -> Image.Image | None:
+    """
+    Build a hand-preservation mask from DensePose labels.
+
+    This is a hard guard so user hands are never replaced by diffusion output
+    even if the garment edit mask expands incorrectly around raised arms.
+    """
+    if "densepose" not in mask_result:
+        return None
+
+    import numpy as np
+    from PIL import Image, ImageFilter
+
+    densepose = np.array(mask_result["densepose"])
+    if densepose.ndim != 2:
+        return None
+
+    hand_mask_np = np.isin(densepose, _DENSEPOSE_HAND_LABELS).astype(np.uint8) * 255
+    if hand_mask_np.max() == 0:
+        return None
+
+    hand_mask = Image.fromarray(hand_mask_np, mode="L")
+    hand_mask = hand_mask.filter(ImageFilter.MaxFilter(size=3))
+    hand_mask = hand_mask.filter(ImageFilter.MinFilter(size=3))
+    return hand_mask
+
+
 def _build_full_body_edit_mask(
     mask_result: dict[str, Any],
     base_mask: Image.Image,
@@ -555,6 +585,13 @@ def _run_inference_locked(person_img, cloth_img, category, sleeve_length, pant_l
 
     category = _normalize_category(category)
 
+    # Preserve image fidelity for garments and hands.
+    # - Disable experimental texture warp restoration (can blur logos/textures).
+    # - Disable hand source-patching (prevents low-quality hand cutouts).
+    enable_deep_texture = False
+    warp_strength = 0.0
+    preserve_hands = False
+
     # 💾 Save Last Settings
     try:
         settings = {
@@ -616,6 +653,7 @@ def _run_inference_locked(person_img, cloth_img, category, sleeve_length, pant_l
     automask_category = _CATEGORY_TO_AUTOMASK.get(category, "upper")
     mask_result = _MASKER(person, automask_category, sleeve_length=sleeve_length, pant_length=pant_length)
     mask_pil = mask_result["mask"]
+    hand_mask_pil = _build_hand_preserve_mask(mask_result) if preserve_hands else None
 
     # --- Identity Map Extraction ---
     import numpy as np
@@ -806,6 +844,14 @@ def _run_inference_locked(person_img, cloth_img, category, sleeve_length, pant_l
     if mask_pil is not None:
         progress(0.915, desc="Preserving non-garment content...")
         result_img = _composite_generated_garment(person, result_img, mask_pil, feather_radius=2.0)
+
+    # Always preserve hand regions from the source photo to prevent accidental occlusion.
+    if hand_mask_pil is not None:
+        progress(0.918, desc="Preserving hands...")
+        hand_src = person.resize(result_img.size, Image.LANCZOS) if person.size != result_img.size else person
+        hand_alpha = hand_mask_pil.resize(result_img.size, Image.LANCZOS) if hand_mask_pil.size != result_img.size else hand_mask_pil
+        hand_alpha = hand_alpha.filter(ImageFilter.GaussianBlur(radius=1.0))
+        result_img = Image.composite(hand_src, result_img, hand_alpha)
     
     # Re-composite the preserved head region from the source person image.
     if preserve_head and head_mask_pil is not None:
@@ -903,11 +949,11 @@ def build_ui(mode: str = "generic"):
             sleeve_length = "default"
             pant_length = "default"
             resolution = "High Quality"
-            steps = max(int(steps), 30)
-            guidance = max(float(guidance), 4.2)
-            mask_sharpness = max(int(mask_sharpness), 11)
+            steps = max(int(steps), 50)
+            guidance = max(float(guidance), 4.6)
+            mask_sharpness = max(int(mask_sharpness), 12)
             mask_padding = max(int(mask_padding), 10)
-            detail_boost = min(float(detail_boost), 0.2)
+            detail_boost = max(0.0, min(float(detail_boost), 0.25))
             face_restore_strength = 0.0
             preserve_head = True
             lock_seed = True
@@ -1013,22 +1059,22 @@ def build_ui(mode: str = "generic"):
                     steps = gr.Slider(
                         4,
                         50,
-                        value=30 if motogp_mode else s.get("steps", 20),
+                        value=50 if motogp_mode else s.get("steps", 20),
                         step=1,
                         label="Steps",
-                        info="MotoGP mode enforces at least 30 steps." if motogp_mode else None,
+                        info="MotoGP mode uses 50 steps for better logo fidelity." if motogp_mode else None,
                     )
                     guidance = gr.Slider(
                         1.0,
                         5.0,
-                        value=4.2 if motogp_mode else s.get("guidance", 3.5),
+                        value=4.6 if motogp_mode else s.get("guidance", 3.5),
                         step=0.1,
                         label="Guidance",
                     )
                     mask_sharpness = gr.Slider(
                         0,
                         15,
-                        value=11 if motogp_mode else s.get("mask_sharpness", 12),
+                        value=12 if motogp_mode else s.get("mask_sharpness", 12),
                         step=1,
                         label="Logo & Pattern Sharpness",
                     )
@@ -1042,7 +1088,7 @@ def build_ui(mode: str = "generic"):
                     detail_boost = gr.Slider(
                         0.0,
                         1.0,
-                        value=0.2 if motogp_mode else s.get("detail_boost", 0.4),
+                        value=0.25 if motogp_mode else s.get("detail_boost", 0.4),
                         step=0.1,
                         label="Logo/Pattern Detail Boost",
                     )
@@ -1096,21 +1142,19 @@ def build_ui(mode: str = "generic"):
                         label="High Quality Sampler",
                         interactive=not motogp_mode,
                     )
-                    if not motogp_mode:
-                        enable_deep_texture = gr.Checkbox(
-                            label="Deep Logo & Texture Restoration (TPS Warp)",
-                            value=s.get("enable_deep_texture", False),
-                        )
-                        warp_strength = gr.Slider(
-                            0.0,
-                            1.0,
-                            value=s.get("warp_strength", 1.0),
-                            step=0.1,
-                            label="Texture Warp Blend Force",
-                        )
-                    else:
-                        enable_deep_texture = gr.State(False)
-                        warp_strength = gr.State(1.0)
+                    enable_deep_texture = gr.Checkbox(
+                        label="Deep Logo & Texture Restoration (TPS Warp)",
+                        value=False,
+                        interactive=False,
+                    )
+                    warp_strength = gr.Slider(
+                        0.0,
+                        1.0,
+                        value=0.0,
+                        step=0.1,
+                        label="Texture Warp Blend Force",
+                        interactive=False,
+                    )
                     show_mask = gr.Checkbox(
                         label="Show Masking Step (Debug)",
                         value=s.get("show_mask", False),
@@ -1130,9 +1174,9 @@ def build_ui(mode: str = "generic"):
         def apply_preset(_res):
             if motogp_mode:
                 return (
-                    gr.update(value=30),
-                    gr.update(value=4.2),
-                    gr.update(value=11),
+                    gr.update(value=50),
+                    gr.update(value=4.6),
+                    gr.update(value=12),
                     gr.update(value=10),
                 )
             return (
@@ -1346,6 +1390,10 @@ class ServiceActionRequest(BaseModel):
     requestedBy: str | None = None
 
 
+class TryOnSetupSelectionRequest(BaseModel):
+    cameraId: str
+
+
 def _apply_processing_profile(payload: TryOnApiRequest) -> TryOnApiRequest:
     profile = normalize_processing_profile(payload.processing_profile)
     payload.processing_profile = profile
@@ -1354,11 +1402,12 @@ def _apply_processing_profile(payload: TryOnApiRequest) -> TryOnApiRequest:
         payload.sleeve_length = "default"
         payload.pant_length = "default"
         payload.resolution = "High Quality"
-        payload.steps = max(int(payload.steps), 30)
-        payload.guidance = max(float(payload.guidance), 4.2)
-        payload.mask_sharpness = max(int(payload.mask_sharpness), 11)
+        # High-fidelity Leather route tuned for logo and print clarity.
+        payload.steps = max(int(payload.steps), 50)
+        payload.guidance = max(float(payload.guidance), 4.6)
+        payload.mask_sharpness = max(int(payload.mask_sharpness), 12)
         payload.mask_padding = max(int(payload.mask_padding), 10)
-        payload.detail_boost = min(float(payload.detail_boost), 0.2)
+        payload.detail_boost = max(0.0, min(float(payload.detail_boost), 0.25))
         payload.face_restore_strength = 0.0
         payload.preserve_head = True
         payload.lock_seed = True
@@ -1368,6 +1417,39 @@ def _apply_processing_profile(payload: TryOnApiRequest) -> TryOnApiRequest:
         payload.enable_deep_texture = False
         payload.warp_strength = 1.0
     return payload
+
+
+def _normalize_opt_text(value: Any) -> str | None:
+    text = str(value or "").strip()
+    return text or None
+
+
+def _resolve_tryon_db() -> tuple[str, str] | None:
+    _load_local_env_file(_ROOT / ".env.tryon-worker")
+    _load_local_env_file(_ROOT / ".env.local")
+    mongodb_uri = (os.getenv("MONGODB_ATLAS_URI") or os.getenv("MONGODB_URI") or "").strip()
+    mongodb_db_name = (os.getenv("MONGODB_DB_NAME") or os.getenv("MONGODB_DB") or "").strip()
+    if not mongodb_uri or not mongodb_db_name:
+        return None
+    return mongodb_uri, mongodb_db_name
+
+
+def _get_tryon_db():
+    cfg = _resolve_tryon_db()
+    if not cfg:
+        return None, None
+    from pymongo import MongoClient
+
+    mongodb_uri, mongodb_db_name = cfg
+    client = MongoClient(normalize_mongodb_uri(mongodb_uri), serverSelectionTimeoutMS=3000)
+    return client, client[mongodb_db_name]
+
+
+def _tryon_collection_names() -> tuple[str, str]:
+    return (
+        (os.getenv("TRYON_SETUP_COLLECTION") or "tryon_setups").strip(),
+        (os.getenv("TRYON_CAMERA_SETUP_PREFERENCE_COLLECTION") or "camera_setup_preferences").strip(),
+    )
 
 
 def _build_worker_status_report() -> dict[str, object]:
@@ -1391,8 +1473,10 @@ def _build_worker_status_report() -> dict[str, object]:
 
             client = MongoClient(normalize_mongodb_uri(mongodb_uri), serverSelectionTimeoutMS=3000)
             db = client[mongodb_db_name]
+            setup_collection_name, _ = _tryon_collection_names()
             for status in ("queued", "claimed", "processing", "uploading_result", "notifying_camera", "retry_wait", "done", "failed"):
                 queue_counts[status] = int(db["tryon_jobs"].count_documents({"status": status}))
+            report["activeSetups"] = int(db[setup_collection_name].count_documents({"active": True}))
             client.close()
         except Exception as error:
             report["queueError"] = str(error)
@@ -1548,6 +1632,75 @@ if "fastapi_app" in globals():
         response["quality_validation"] = validation
         response["metadata_path"] = str(sidecar_path)
         return JSONResponse(response)
+
+    @fastapi_app.get("/api/tryon/setups")
+    async def list_tryon_setups(cameraId: str | None = None):
+        camera_id = _normalize_opt_text(cameraId)
+        client, db = _get_tryon_db()
+        if not db:
+            raise HTTPException(status_code=503, detail="Try-on MongoDB is not configured.")
+        setup_collection_name, _ = _tryon_collection_names()
+        query = {"active": True}
+        if camera_id:
+            query["$or"] = [
+                {"cameraId": {"$exists": False}},
+                {"cameraId": None},
+                {"cameraId": camera_id},
+            ]
+        else:
+            query["$or"] = [{"cameraId": {"$exists": False}}, {"cameraId": None}]
+        try:
+            setups = []
+            for setup in db[setup_collection_name].find(query).sort([("isDefault", -1), ("cameraId", 1), ("rank", 1), ("name", 1)]):
+                setup_id = _normalize_opt_text(setup.get("setupId"))
+                if not setup_id:
+                    continue
+                setup_payload = dict(setup.get("config") or {})
+                setups.append(
+                    {
+                        "setupId": setup_id,
+                        "name": setup.get("name") or setup_id,
+                        "description": setup.get("description"),
+                        "cameraId": _normalize_opt_text(setup.get("cameraId")),
+                        "isDefault": bool(setup.get("isDefault")),
+                        "rank": int(setup.get("rank") or 0),
+                        "config": setup_payload,
+                    }
+                )
+            return {"cameraId": camera_id, "setups": setups}
+        finally:
+            client.close()
+
+    @fastapi_app.post("/api/tryon/setups/{setupId}/use")
+    async def use_tryon_setup(setupId: str, payload: TryOnSetupSelectionRequest):
+        setup_id = _normalize_opt_text(setupId)
+        camera_id = _normalize_opt_text(payload.cameraId)
+        if not setup_id:
+            raise HTTPException(status_code=400, detail="setupId is required.")
+        if not camera_id:
+            raise HTTPException(status_code=400, detail="cameraId is required.")
+
+        client, db = _get_tryon_db()
+        if not db:
+            raise HTTPException(status_code=503, detail="Try-on MongoDB is not configured.")
+        setup_collection_name, preference_collection_name = _tryon_collection_names()
+        setup = db[setup_collection_name].find_one({"setupId": setup_id, "active": True})
+        if not setup:
+            raise HTTPException(status_code=404, detail="setupId not found or inactive.")
+        updated_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        db[preference_collection_name].update_one(
+            {"cameraId": camera_id},
+            {"$set": {"setupId": setup_id, "cameraId": camera_id, "updatedAt": updated_at}},
+            upsert=True,
+        )
+        try:
+            return {
+                "cameraId": camera_id,
+                "setupId": setup_id,
+                "updatedAt": updated_at,
+            }
+        finally:
+            client.close()
 
     @fastapi_app.get("/api/capabilities")
     async def capabilities_api():
