@@ -255,7 +255,10 @@ Setup metadata in Atlas + local catalog:
 
 ```json
 {
+  "schemaVersion": 1,
   "jobId": "job_001",
+  "status": "queued",
+  "stage": "queued",
   "source": {
     "submissionId": "sub_001",
     "cameraId": "camera_123",
@@ -297,6 +300,10 @@ Important suit-asset boundary:
 - Camera is now the primary owner of uploaded leather-suit assets.
 - The worker downloads the suit image from the `leather_suits` record first.
 - `TRYON_SUIT_ASSET_ROOT` remains only as a legacy fallback for older suit rows without a Camera-hosted asset URL.
+
+Canonical Atlas queue and suit contracts are documented in `docs/TRYON_ATLAS_CONTRACT.md`.
+
+Queue rows are validated before processing. Legacy rows without `schemaVersion` are normalized to the current in-memory shape, but missing required fields still fail with stable validation errors.
 
 ## Model Vault Contract
 

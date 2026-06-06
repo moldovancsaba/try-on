@@ -28,7 +28,9 @@ from services.worker_contracts import (
     PROCESSING_PROFILE_MOTOGP,
     PROCESSING_PROFILE_SEGMIND_IDM_VTON,
     PROCESSING_PROFILE_FAL_TRYON,
+    normalize_job_document,
     normalize_processing_profile,
+    normalize_suit_document,
     validate_job_document,
     validate_suit_document,
 )
@@ -1137,6 +1139,7 @@ class TryOnQueueWorker:
         suit = self.suits.find_one({"leatherSuitId": leather_suit_id, "active": True})
         if not suit:
             raise RuntimeError(f"missing suit:{leather_suit_id}")
+        suit = normalize_suit_document(suit)
         suit_errors = validate_suit_document(suit)
         if suit_errors:
             raise RuntimeError(",".join(suit_errors))
@@ -1841,6 +1844,7 @@ class TryOnQueueWorker:
         raise RuntimeError(f"camera_completion_failed:{last_status}:{last_body[:300]}")
 
     def process_job(self, job: dict[str, Any]) -> None:
+        job = normalize_job_document(job)
         job_id = job["jobId"]
         self.current_job_id = job_id
         self.update_runtime_status(currentJobId=job_id, lastClaimedJobId=job_id)
