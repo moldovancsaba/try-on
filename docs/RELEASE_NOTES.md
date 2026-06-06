@@ -29,3 +29,8 @@ Validation:
 ./.venv311/bin/python -m unittest tests.test_local_ai_services
 ```
 
+GitHub handover:
+
+- Issues `#25-#36` are implemented, commented, and closed.
+- Native GitHub Projects v2 card/status updates are pending GraphQL quota reset.
+- See `docs/LOCAL_AI_SERVICES.md` for exact board follow-up steps.

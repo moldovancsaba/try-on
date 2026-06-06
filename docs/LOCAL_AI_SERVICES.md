@@ -254,3 +254,56 @@ The tests cover:
 - report export
 - unsupported service rejection
 
+## GitHub Project Board Handover
+
+Implementation status:
+
+- Code, APIs, CLI, documentation, user guide, release notes, README updates, and focused validation shipped in commit `edd0bc2`.
+- GitHub issues `#25` through `#36` were commented with delivery notes and closed as completed.
+- Labels and milestones were created directly in the repository.
+- Native GitHub Projects v2 card/status mutation is still pending because the account's GraphQL quota was exhausted during delivery.
+
+Project board:
+
+```text
+https://github.com/users/moldovancsaba/projects/41
+```
+
+Pending board action after GraphQL quota reset:
+
+1. Ensure issues `#25` through `#36` are present on `{try-on} - From IDEA to LIVE`.
+2. Move all `#25` through `#36` project items to `Done`.
+3. Add or confirm the board readme section `Current Next Pack: Local AI Services - Zero External Cost v1`.
+4. Preserve this execution order on the board:
+
+```text
+1. #25 Platform: Local AI service registry - zero-cost capability contract
+2. #26 Models: Local AI model pack governance - inventory, health, and rollout contract
+3. #27 Studio: Garment isolation - reusable transparent asset pipeline
+4. #28 Studio: Product photo cleanup - local catalog image workflow
+5. #29 Quality: Brand safety analyzer - logo and text preservation scoring
+6. #30 Quality: Try-on auto-review gate - local pass, warn, and rerun recommendation flow
+7. #31 Editing: Local inpainting cleanup - artifact repair workflow
+8. #32 Variants: Campaign output generator - local ratio and preset batch production
+9. #33 Events: Branded social still builder - local event-template production
+10. #34 Validation: Synthetic image fixture generator - private regression dataset pipeline
+11. #35 UI: Local AI services console - GDS operator control surface
+12. #36 Analytics: Local AI service reporting - zero-cost value and operational metrics
+```
+
+GraphQL quota state observed during delivery:
+
+```json
+{"limit":5000,"remaining":0,"reset":1780772498,"used":5000}
+```
+
+The reset timestamp corresponds to `2026-06-06 21:01:38 CEST` in the local environment used for delivery.
+
+Suggested follow-up verification:
+
+```bash
+gh api rate_limit --jq '.resources.graphql'
+gh project item-list 41 --owner moldovancsaba --format json --limit 100
+```
+
+If the issues are missing from the project board after quota reset, add each issue to project `41` and set status to `Done` using GitHub Projects v2 tooling or the `gh project` commands available in the local CLI version.
