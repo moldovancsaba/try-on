@@ -418,6 +418,7 @@ class TryOnQueueWorker:
         self.mongo = MongoClient(normalize_mongodb_uri(config.mongodb_uri))
         self.db = self.mongo[config.mongodb_db_name]
         self.jobs = self.db["tryon_jobs"]
+        self.worker_heartbeats = self.db["tryon_worker_heartbeats"]
         self.suits = self.db["leather_suits"]
         self.setups = self.db[config.setup_collection]
         self.camera_setup_preferences = self.db[config.setup_preference_collection]
@@ -697,16 +698,32 @@ class TryOnQueueWorker:
         )
 
     def update_runtime_status(self, **patch: Any) -> None:
+        now = now_iso()
         payload = {
             "workerRunning": True,
             "workerId": self.config.worker_id,
             "currentJobId": self.current_job_id,
-            "lastLoopAt": now_iso(),
+            "lastLoopAt": now,
+            "lastHeartbeatAt": now,
             "pollIntervalSeconds": self.config.poll_interval_seconds,
             "enabled": self.config.worker_enabled,
         }
         payload.update(patch)
         write_worker_status(payload)
+        try:
+            self.worker_heartbeats.update_one(
+                {"workerId": self.config.worker_id},
+                {
+                    "$set": {
+                        **payload,
+                        "updatedAt": now,
+                    },
+                    "$setOnInsert": {"createdAt": now},
+                },
+                upsert=True,
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"[tryon-worker] heartbeat write failed: {redact_url(str(exc))}")
 
     def recover_stale_jobs(self) -> int:
         now = now_iso()
