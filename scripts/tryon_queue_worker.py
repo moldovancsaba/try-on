@@ -832,6 +832,44 @@ class TryOnQueueWorker:
             )
         return int(result.modified_count)
 
+    def recover_interrupted_owned_jobs(self) -> int:
+        now = now_iso()
+        result = self.jobs.update_many(
+            {
+                "status": {"$in": ["claimed", "processing", "uploading_result", "notifying_camera"]},
+                "processing.workerId": self.config.worker_id,
+                "$or": [
+                    {"error.message": {"$exists": False}},
+                    {"error.message": None},
+                    {"error.message": {"$not": {"$regex": r"timeout|timed out|read timeout", "$options": "i"}}},
+                ],
+            },
+            {
+                "$set": {
+                    "status": "queued",
+                    "stage": "queued",
+                    "updatedAt": now,
+                    "processing.nextAttemptAt": now,
+                    "processing.leaseExpiresAt": None,
+                    "processing.lastHeartbeatAt": None,
+                    "error": {
+                        "code": "worker_restarted",
+                        "message": "Worker restarted before job completed; job returned to queue.",
+                        "details": None,
+                    },
+                },
+            },
+        )
+        if result.modified_count:
+            self.emit_event(
+                level="warn",
+                event="recovered_interrupted_owned_jobs",
+                status="queued",
+                stage="queued",
+                details={"count": int(result.modified_count)},
+            )
+        return int(result.modified_count)
+
     def recover_operator_aborted_jobs(self) -> int:
         selector = {
             "status": "failed",
@@ -2207,6 +2245,7 @@ class TryOnQueueWorker:
             print("[tryon-worker] worker disabled by settings")
             return False
         self.recover_interrupted_timeout_jobs()
+        self.recover_interrupted_owned_jobs()
         self.recover_stale_jobs()
         self.recover_stale_heartbeat_jobs()
         self.recover_operator_aborted_jobs()
