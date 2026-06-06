@@ -38,10 +38,21 @@ from services.mongo_uri import normalize_mongodb_uri
 from services.single_task_lock import SingleTaskLock
 from services.worker_runtime import append_worker_event, write_worker_status
 from services.worker_settings import DEFAULT_POLL_INTERVAL_SECONDS, load_worker_settings
+from services.worker_infra import (
+    INFRA_CONTRACT_VERSION,
+    ProviderCircuitBreaker,
+    ProviderPolicy,
+    QueueBackpressurePolicy,
+    Timer,
+    classify_failure_category,
+    failure_note,
+    summarize_queue,
+)
 
 
 UTC = timezone.utc
 PIPELINE_VERSION = "1.1.0"
+API_CONTRACT_VERSION = "tryon-api-v1"
 FAL_SETUP_ID = "fal_ai_tryon"
 PUBLICATION_STATE_UPLOADED = "uploaded"
 PUBLICATION_STATE_CAMERA_NOTIFIED = "camera_notified"
@@ -131,6 +142,17 @@ class WorkerConfig:
     fal_key: str
     fal_tryon_model: str
     fal_tryon_timeout_seconds: int
+    max_concurrency: int
+    backpressure_enabled: bool
+    backpressure_max_ready_jobs: int
+    backpressure_max_oldest_ready_age_seconds: int
+    provider_failure_threshold: int
+    provider_cooldown_seconds: int
+    local_daily_limit: int
+    segmind_daily_limit: int
+    fal_daily_limit: int
+    imgbb_daily_limit: int
+    camera_callback_daily_limit: int
     setup_collection: str
     setup_preference_collection: str
     default_setup_id: str
@@ -219,6 +241,17 @@ def load_config() -> WorkerConfig:
         fal_key=fal_key,
         fal_tryon_model=fal_tryon_model,
         fal_tryon_timeout_seconds=parse_int(os.getenv("FAL_TRYON_TIMEOUT_SECONDS"), 300),
+        max_concurrency=parse_int(os.getenv("TRYON_MAX_CONCURRENCY"), 1),
+        backpressure_enabled=parse_bool(os.getenv("TRYON_BACKPRESSURE_ENABLED"), True),
+        backpressure_max_ready_jobs=parse_int(os.getenv("TRYON_BACKPRESSURE_MAX_READY_JOBS"), 50),
+        backpressure_max_oldest_ready_age_seconds=parse_int(os.getenv("TRYON_BACKPRESSURE_MAX_OLDEST_READY_AGE_SECONDS"), 3600),
+        provider_failure_threshold=parse_int(os.getenv("TRYON_PROVIDER_FAILURE_THRESHOLD"), 3),
+        provider_cooldown_seconds=parse_int(os.getenv("TRYON_PROVIDER_COOLDOWN_SECONDS"), 900),
+        local_daily_limit=parse_int(os.getenv("TRYON_LOCAL_DAILY_LIMIT"), 10000),
+        segmind_daily_limit=parse_int(os.getenv("SEGMIND_DAILY_LIMIT"), 500),
+        fal_daily_limit=parse_int(os.getenv("FAL_DAILY_LIMIT"), 500),
+        imgbb_daily_limit=parse_int(os.getenv("IMGBB_DAILY_LIMIT"), 2000),
+        camera_callback_daily_limit=parse_int(os.getenv("CAMERA_CALLBACK_DAILY_LIMIT"), 5000),
         setup_collection=(os.getenv("TRYON_SETUP_COLLECTION") or TRYON_SETUP_COLLECTION).strip(),
         setup_preference_collection=(os.getenv("TRYON_CAMERA_SETUP_PREFERENCE_COLLECTION") or TRYON_SETUP_PREFERENCES_COLLECTION).strip(),
         default_setup_id=(os.getenv("TRYON_DEFAULT_SETUP_ID") or TRYON_DEFAULT_SETUP_ID).strip(),
@@ -431,8 +464,102 @@ class TryOnQueueWorker:
         self.current_job_id: str | None = None
         self._fal_session_disabled = False
         self._fal_session_disable_reason: str | None = None
+        self.provider_breaker = ProviderCircuitBreaker(
+            REPO_ROOT / ".runtime" / "provider_metrics.json",
+            self._provider_policies(),
+        )
         self._sync_local_setups_to_mongo()
         self.ensure_default_setup_exists()
+
+    def _provider_policies(self) -> dict[str, ProviderPolicy]:
+        return {
+            "local": ProviderPolicy(
+                provider="local",
+                timeout_seconds=self.config.local_tryon_timeout_seconds,
+                failure_threshold=self.config.provider_failure_threshold,
+                cooldown_seconds=self.config.provider_cooldown_seconds,
+                daily_request_limit=self.config.local_daily_limit,
+                concurrency_limit=max(1, self.config.max_concurrency),
+            ),
+            "segmind": ProviderPolicy(
+                provider="segmind",
+                timeout_seconds=self.config.segmind_api_timeout_seconds,
+                failure_threshold=self.config.provider_failure_threshold,
+                cooldown_seconds=self.config.provider_cooldown_seconds,
+                daily_request_limit=self.config.segmind_daily_limit,
+                concurrency_limit=1,
+            ),
+            "fal": ProviderPolicy(
+                provider="fal",
+                timeout_seconds=self.config.fal_tryon_timeout_seconds,
+                failure_threshold=self.config.provider_failure_threshold,
+                cooldown_seconds=self.config.provider_cooldown_seconds,
+                daily_request_limit=self.config.fal_daily_limit,
+                concurrency_limit=1,
+            ),
+            "imgbb": ProviderPolicy(
+                provider="imgbb",
+                timeout_seconds=120,
+                failure_threshold=self.config.provider_failure_threshold,
+                cooldown_seconds=self.config.provider_cooldown_seconds,
+                daily_request_limit=self.config.imgbb_daily_limit,
+                concurrency_limit=1,
+            ),
+            "camera": ProviderPolicy(
+                provider="camera",
+                timeout_seconds=60,
+                failure_threshold=self.config.provider_failure_threshold,
+                cooldown_seconds=self.config.provider_cooldown_seconds,
+                daily_request_limit=self.config.camera_callback_daily_limit,
+                concurrency_limit=1,
+            ),
+        }
+
+    def _record_provider_success(self, provider: str, elapsed_seconds: float, *, job_id: str | None = None) -> None:
+        state = self.provider_breaker.record_result(provider, ok=True, latency_seconds=elapsed_seconds)
+        self.emit_event(
+            level="info",
+            event="provider_request_succeeded",
+            status="processing" if job_id else "idle",
+            stage="provider",
+            job_id=job_id,
+            details={"provider": provider, "latencySeconds": round(elapsed_seconds, 3), "consecutiveFailures": state.get("consecutiveFailures", 0)},
+        )
+
+    def _record_provider_failure(self, provider: str, elapsed_seconds: float, error: str, *, job_id: str | None = None) -> None:
+        state = self.provider_breaker.record_result(provider, ok=False, latency_seconds=elapsed_seconds, error=redact_url(error) or error)
+        self.emit_event(
+            level="warn",
+            event="provider_request_failed",
+            status="processing" if job_id else "idle",
+            stage="provider",
+            job_id=job_id,
+            details={
+                "provider": provider,
+                "latencySeconds": round(elapsed_seconds, 3),
+                "consecutiveFailures": state.get("consecutiveFailures", 0),
+                "circuitOpenUntil": state.get("circuitOpenUntil"),
+                "message": redact_url(error),
+            },
+        )
+
+    def _call_provider(self, provider: str, func: Any, *, job_id: str | None = None) -> Any:
+        self.provider_breaker.assert_available(provider)
+        started = time.monotonic()
+        try:
+            result = func()
+        except Exception as exc:  # noqa: BLE001
+            self._record_provider_failure(provider, time.monotonic() - started, str(exc), job_id=job_id)
+            raise
+        self._record_provider_success(provider, time.monotonic() - started, job_id=job_id)
+        return result
+
+    def _queue_pressure_policy(self) -> QueueBackpressurePolicy:
+        return QueueBackpressurePolicy(
+            enabled=self.config.backpressure_enabled,
+            max_ready_jobs=self.config.backpressure_max_ready_jobs,
+            max_oldest_ready_age_seconds=self.config.backpressure_max_oldest_ready_age_seconds,
+        )
 
     def _normalize_setup_id(self, value: str | None) -> str | None:
         text = (value or "").strip()
@@ -712,6 +839,12 @@ class TryOnQueueWorker:
             "lastHeartbeatAt": now,
             "pollIntervalSeconds": self.config.poll_interval_seconds,
             "enabled": self.config.worker_enabled,
+            "infraContractVersion": INFRA_CONTRACT_VERSION,
+            "apiContractVersion": API_CONTRACT_VERSION,
+            "pipelineVersion": PIPELINE_VERSION,
+            "maxConcurrency": max(1, self.config.max_concurrency),
+            "activeWorkerSlots": 1 if self.current_job_id else 0,
+            "providerScorecard": self.provider_breaker.scorecard(),
         }
         payload.update(patch)
         write_worker_status(payload)
@@ -817,6 +950,8 @@ class TryOnQueueWorker:
                         "code": "timeout_retry_limit_reached",
                         "message": "Timeout failed twice; job left failed behind the queue.",
                         "details": "Recovered interrupted second-timeout job.",
+                        "category": "timeout",
+                        "operatorNote": failure_note("timeout", "Recovered interrupted second-timeout job."),
                     },
                 },
                 "$unset": {"processing.nextAttemptAt": ""},
@@ -856,6 +991,8 @@ class TryOnQueueWorker:
                         "code": "worker_restarted",
                         "message": "Worker restarted before job completed; job returned to queue.",
                         "details": None,
+                        "category": "local_runtime_error",
+                        "operatorNote": failure_note("local_runtime_error", "Worker restarted before job completed."),
                     },
                 },
             },
@@ -979,11 +1116,18 @@ class TryOnQueueWorker:
         attempt_count = int(job.get("processing", {}).get("attemptCount", 0))
         if code != "transient_runtime_error":
             now = now_iso()
+            category = classify_failure_category(code, message)
             self.jobs.update_one(
                 {"jobId": job["jobId"]},
                 {
                     "$set": {
-                        "error": {"code": code, "message": message, "details": details},
+                        "error": {
+                            "code": code,
+                            "message": message,
+                            "details": details,
+                            "category": category,
+                            "operatorNote": failure_note(category, message),
+                        },
                         "updatedAt": now,
                         "status": "failed",
                         "stage": "failed",
@@ -1002,10 +1146,12 @@ class TryOnQueueWorker:
                 "code": "timeout_retry_limit_reached" if timeout_limit_reached else code,
                 "message": message,
                 "details": details or ("Timeout failed twice; job left failed behind the queue." if timeout_limit_reached else None),
+                "category": classify_failure_category("timeout_retry_limit_reached" if timeout_limit_reached else code, message),
             },
             "updatedAt": now,
             "processing.leaseExpiresAt": None,
         }
+        payload["error"]["operatorNote"] = failure_note(payload["error"]["category"], message)
         if delay_minutes is not None:
             payload["status"] = "retry_wait"
             payload["stage"] = "failed"
@@ -1279,10 +1425,13 @@ class TryOnQueueWorker:
         payload["person_image_path"] = str(person_input_path)
         payload["garment_image_path"] = str(suit_input_path)
         payload["output_image_path"] = str(output_path)
-        response = requests.post(
-            self.config.local_tryon_api_url,
-            json=payload,
-            timeout=self.config.local_tryon_timeout_seconds,
+        response = self._call_provider(
+            "local",
+            lambda: requests.post(
+                self.config.local_tryon_api_url,
+                json=payload,
+                timeout=self.config.local_tryon_timeout_seconds,
+            ),
         )
         if response.status_code >= 400:
             raise RuntimeError(f"local_tryon_api_failed:{response.status_code}:{response.text[:300]}")
@@ -1680,11 +1829,14 @@ class TryOnQueueWorker:
         )
 
         submit_url = self._fal_queue_submit_url()
-        response = requests.post(
-            submit_url,
-            headers=self._fal_headers(),
-            json=request_payload,
-            timeout=min(30, max(10, self.config.fal_tryon_timeout_seconds)),
+        response = self._call_provider(
+            "fal",
+            lambda: requests.post(
+                submit_url,
+                headers=self._fal_headers(),
+                json=request_payload,
+                timeout=min(30, max(10, self.config.fal_tryon_timeout_seconds)),
+            ),
         )
         if response.status_code >= 400:
             raise RuntimeError(f"fal_api_failed:{response.status_code}:{response.text[:300]}")
@@ -1830,11 +1982,14 @@ class TryOnQueueWorker:
             if "alpha" not in lowered_prompt and "transparent garment png" not in lowered_prompt:
                 request_payload["garment_des"] = f"{request_payload['garment_des']}. {extra_prompt}"
 
-        response = requests.post(
-            self.config.segmind_api_url,
-            headers={"x-api-key": self.config.segmind_api_key, "Content-Type": "application/json"},
-            json=request_payload,
-            timeout=self.config.segmind_api_timeout_seconds,
+        response = self._call_provider(
+            "segmind",
+            lambda: requests.post(
+                self.config.segmind_api_url,
+                headers={"x-api-key": self.config.segmind_api_key, "Content-Type": "application/json"},
+                json=request_payload,
+                timeout=self.config.segmind_api_timeout_seconds,
+            ),
         )
         if response.status_code >= 400:
             raise RuntimeError(f"segmind_api_failed:{response.status_code}:{response.text[:300]}")
@@ -1885,10 +2040,13 @@ class TryOnQueueWorker:
 
     def upload_to_imgbb(self, image_path: Path) -> dict[str, Any]:
         encoded = base64.b64encode(image_path.read_bytes()).decode("utf-8")
-        response = requests.post(
-            "https://api.imgbb.com/1/upload",
-            data={"key": self.config.imgbb_api_key, "image": encoded},
-            timeout=120,
+        response = self._call_provider(
+            "imgbb",
+            lambda: requests.post(
+                "https://api.imgbb.com/1/upload",
+                data={"key": self.config.imgbb_api_key, "image": encoded},
+                timeout=120,
+            ),
         )
         if response.status_code >= 400:
             raise RuntimeError(f"imgbb_upload_failed:{response.status_code}:{response.text[:300]}")
@@ -1937,11 +2095,14 @@ class TryOnQueueWorker:
                 },
             }
             payload.update(payload_variant)
-            response = requests.post(
-                self.config.camera_complete_url,
-                json=payload,
-                headers={"x-camera-tryon-secret": self.config.camera_internal_secret},
-                timeout=60,
+            response = self._call_provider(
+                "camera",
+                lambda payload=payload: requests.post(
+                    self.config.camera_complete_url,
+                    json=payload,
+                    headers={"x-camera-tryon-secret": self.config.camera_internal_secret},
+                    timeout=60,
+                ),
             )
             last_status = response.status_code
             last_body = response.text or ""
@@ -2244,6 +2405,24 @@ class TryOnQueueWorker:
             self.update_runtime_status(currentJobId=None, workerRunning=True, note="worker_disabled")
             print("[tryon-worker] worker disabled by settings")
             return False
+        self.provider_breaker = ProviderCircuitBreaker(
+            REPO_ROOT / ".runtime" / "provider_metrics.json",
+            self._provider_policies(),
+        )
+        queue_summary = summarize_queue(self.jobs, policy=self._queue_pressure_policy())
+        self.update_runtime_status(
+            currentJobId=None,
+            queueSummary=queue_summary,
+            backpressure=queue_summary.get("backpressure"),
+        )
+        if (queue_summary.get("backpressure") or {}).get("active"):
+            self.emit_event(
+                level="warn",
+                event="queue_backpressure_active",
+                status="idle",
+                stage="claim_gate",
+                details=queue_summary.get("backpressure") or {},
+            )
         self.recover_interrupted_timeout_jobs()
         self.recover_interrupted_owned_jobs()
         self.recover_stale_jobs()

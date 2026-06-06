@@ -183,3 +183,112 @@ Publication must be safe across worker retries and restarts:
 - If `processing.cameraNotifiedAt` exists, the worker must mark the job `done` without repeating upload or callback.
 - Camera completion must be idempotent by `jobId`; duplicate callbacks for an already-materialized result should return success.
 - Publication errors are stored under `processing.publicationError` and redacted in worker events.
+
+## Critical infrastructure contract v2026.06
+
+Current infrastructure contract:
+
+- `infraContractVersion = 2026.06-critical-infra-v1`
+- worker API contract: `tryon-api-v1`
+- worker pipeline version: `1.1.0`
+- provider metrics schema: `1`
+- reconciliation report schema: `1`
+- canary report schema: `1`
+
+Additional worker heartbeat/status fields:
+
+- `infraContractVersion`
+- `apiContractVersion`
+- `pipelineVersion`
+- `maxConcurrency`
+- `activeWorkerSlots`
+- `queueSummary`
+- `backpressure`
+- `providerScorecard`
+
+`queueSummary.backpressure` is advisory by default. It tells Camera/admin surfaces that the worker is overloaded, but the local worker continues draining existing jobs unless an operator disables it.
+
+## Failure taxonomy
+
+Final failed jobs must include:
+
+```json
+{
+  "error": {
+    "code": "timeout_retry_limit_reached",
+    "message": "Timeout failed twice; job left failed behind the queue.",
+    "details": "...",
+    "category": "timeout",
+    "operatorNote": {
+      "category": "timeout",
+      "label": "Provider or network timeout",
+      "recommendedAction": "Retry once; after repeated timeout leave failed and review provider latency.",
+      "message": "redacted short message"
+    }
+  }
+}
+```
+
+Supported categories:
+
+- `timeout`
+- `provider_error`
+- `validation_error`
+- `upload_error`
+- `callback_error`
+- `operator_cancel`
+- `local_runtime_error`
+- `unknown`
+
+## Provider scorecard and circuit-breaker state
+
+Provider metrics are stored locally in `.runtime/provider_metrics.json` and are also exposed through worker status.
+
+Tracked providers:
+
+- `local`
+- `segmind`
+- `fal`
+- `imgbb`
+- `camera`
+
+Each provider records:
+
+- request count
+- success count
+- failure count
+- timeout count
+- slow count
+- consecutive failures
+- circuit open timestamp
+- recent latency samples
+- daily request counters
+
+Circuit policy:
+
+- a provider opens after `TRYON_PROVIDER_FAILURE_THRESHOLD` consecutive failures
+- open circuits block new calls for `TRYON_PROVIDER_COOLDOWN_SECONDS`
+- success resets consecutive failure count and closes the circuit
+- daily limits block provider calls before external rate/cost collapse
+
+## Reconciliation contract
+
+`./.venv311/bin/python scripts/tryon_infra_cli.py reconcile` emits:
+
+```json
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-06-06T00:00:00Z",
+  "findingCount": 0,
+  "findings": []
+}
+```
+
+Finding types:
+
+- `done_missing_public_url`
+- `uploaded_missing_camera_callback`
+- `active_expired_lease`
+- `failed_missing_category`
+
+`safeReplay=true` means the condition is normally safe for an idempotent replay path. Unsafe findings require manual review.

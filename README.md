@@ -823,3 +823,59 @@ Upstream CatVTON references:
 - [CatVTON Hugging Face](https://huggingface.co/zhengchong/CatVTON)
 
 Vendored upstream docs under `vendor/` are preserved as third-party reference material and are not the runtime contract for this app.
+
+## Critical Infrastructure Operations
+
+The worker ships with a production reliability layer documented in `docs/TRYON_CRITICAL_INFRASTRUCTURE.md`.
+
+Contract versions:
+
+- infrastructure contract: `2026.06-critical-infra-v1`
+- try-on API contract: `tryon-api-v1`
+- worker pipeline: `1.1.0`
+
+Primary operator commands:
+
+```bash
+./.venv311/bin/python scripts/tryon_infra_cli.py status
+./.venv311/bin/python scripts/tryon_infra_cli.py reconcile --limit 200
+./.venv311/bin/python scripts/tryon_infra_cli.py backfill-failure-notes --limit 500
+./.venv311/bin/python scripts/tryon_canary.py
+./.venv311/bin/python scripts/tryon_load_benchmark.py --jobs 20 --median-seconds 180
+```
+
+Reliability features:
+
+- provider latency/failure scorecard
+- provider circuit-breaker and cooldown policy
+- provider daily request limits
+- queue backpressure reporting by depth and age
+- failed-job taxonomy with operator notes
+- Atlas reconciliation report for callback/publication mismatches
+- service canary status written to `.runtime/canary_status.json`
+- dry-run throughput benchmark plan written to `.runtime/load_benchmark_plan.json`
+
+Safe defaults:
+
+- `TRYON_MAX_CONCURRENCY=1`
+- backpressure reports overload but does not discard existing jobs
+- repeated provider failures open a circuit instead of repeatedly blocking the queue
+- second timeout remains final failed according to the existing timeout policy
+
+Relevant environment controls:
+
+```bash
+TRYON_MAX_CONCURRENCY=1
+TRYON_BACKPRESSURE_ENABLED=true
+TRYON_BACKPRESSURE_MAX_READY_JOBS=50
+TRYON_BACKPRESSURE_MAX_OLDEST_READY_AGE_SECONDS=3600
+TRYON_PROVIDER_FAILURE_THRESHOLD=3
+TRYON_PROVIDER_COOLDOWN_SECONDS=900
+TRYON_LOCAL_DAILY_LIMIT=10000
+SEGMIND_DAILY_LIMIT=500
+FAL_DAILY_LIMIT=500
+IMGBB_DAILY_LIMIT=2000
+CAMERA_CALLBACK_DAILY_LIMIT=5000
+```
+
+Maintenance rule: if queue status, provider metrics, failure taxonomy, reconciliation findings, or worker heartbeat fields change, update `docs/TRYON_ATLAS_CONTRACT.md` and `docs/TRYON_CRITICAL_INFRASTRUCTURE.md` in the same commit.
