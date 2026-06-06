@@ -394,6 +394,92 @@ gh project field-list 41 --owner moldovancsaba --format json
 
 If the local `gh project` command still reports `unknown owner type` after quota reset, use the GitHub web UI for the final board mutation or use GraphQL directly through `gh api graphql` with the project id from `gh project view`.
 
+Direct GraphQL fallback plan after quota reset:
+
+1. Discover the user project id, fields, and options.
+
+```bash
+gh api graphql -f query='
+query {
+  user(login: "moldovancsaba") {
+    projectV2(number: 41) {
+      id
+      title
+      fields(first: 50) {
+        nodes {
+          ... on ProjectV2Field { id name }
+          ... on ProjectV2SingleSelectField {
+            id
+            name
+            options { id name }
+          }
+        }
+      }
+    }
+  }
+}'
+```
+
+2. Discover existing project items for issues `#25-#36`.
+
+```bash
+gh api graphql -f query='
+query {
+  repository(owner: "moldovancsaba", name: "try-on") {
+    issues(first: 12, filterBy: {states: CLOSED}) {
+      nodes {
+        number
+        title
+        id
+        projectItems(first: 20) {
+          nodes {
+            id
+            project { id number title }
+          }
+        }
+      }
+    }
+  }
+}'
+```
+
+3. For any missing issue, add it to project `41` with `addProjectV2ItemById`.
+
+```bash
+gh api graphql -f query='
+mutation($project: ID!, $content: ID!) {
+  addProjectV2ItemById(input: {projectId: $project, contentId: $content}) {
+    item { id }
+  }
+}' -F project='PROJECT_ID_FROM_STEP_1' -F content='ISSUE_NODE_ID'
+```
+
+4. Set status to `Done` with `updateProjectV2ItemFieldValue`.
+
+```bash
+gh api graphql -f query='
+mutation($project: ID!, $item: ID!, $field: ID!, $done: String!) {
+  updateProjectV2ItemFieldValue(input: {
+    projectId: $project,
+    itemId: $item,
+    fieldId: $field,
+    value: { singleSelectOptionId: $done }
+  }) {
+    projectV2Item { id }
+  }
+}' -F project='PROJECT_ID_FROM_STEP_1' -F item='PROJECT_ITEM_ID' -F field='STATUS_FIELD_ID' -F done='DONE_OPTION_ID'
+```
+
+GraphQL fields to capture in the later run:
+
+```text
+PROJECT_ID
+STATUS_FIELD_ID
+DONE_OPTION_ID
+ISSUE_NODE_ID for #25-#36
+PROJECT_ITEM_ID for #25-#36
+```
+
 Suggested follow-up command sequence after quota reset:
 
 ```bash
