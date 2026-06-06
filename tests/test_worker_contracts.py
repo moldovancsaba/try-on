@@ -5,6 +5,7 @@ import unittest
 from services.worker_contracts import (
     PROCESSING_PROFILE_GENERIC,
     PROCESSING_PROFILE_MOTOGP,
+    normalize_job_document,
     normalize_processing_profile,
     validate_job_document,
     validate_suit_document,
@@ -21,8 +22,10 @@ class WorkerContractTests(unittest.TestCase):
     def test_validate_job_document_accepts_current_shape(self) -> None:
         errors = validate_job_document(
             {
+                "schemaVersion": 1,
                 "jobId": "job_1",
                 "status": "queued",
+                "stage": "queued",
                 "source": {"submissionId": "sub_1", "imageUrl": "https://example.com/image.png"},
                 "request": {"leatherSuitId": "suit_1", "processingProfile": PROCESSING_PROFILE_MOTOGP},
                 "processing": {"attemptCount": 0},
@@ -33,8 +36,10 @@ class WorkerContractTests(unittest.TestCase):
     def test_validate_job_document_accepts_setup_reference(self) -> None:
         errors = validate_job_document(
             {
+                "schemaVersion": 1,
                 "jobId": "job_2",
                 "status": "queued",
+                "stage": "queued",
                 "source": {"submissionId": "sub_1", "imageUrl": "https://example.com/image.png", "cameraId": "camera_a"},
                 "request": {
                     "leatherSuitId": "suit_1",
@@ -52,8 +57,30 @@ class WorkerContractTests(unittest.TestCase):
         self.assertIn("missing_submission_id", errors)
         self.assertIn("missing_leather_suit_id", errors)
 
+    def test_normalize_job_document_maps_legacy_top_level_fields(self) -> None:
+        job = normalize_job_document(
+            {
+                "jobId": "job_legacy",
+                "submissionId": "sub_legacy",
+                "sourceImageUrl": "https://example.com/source.png",
+                "leatherSuitId": "suit_legacy",
+                "cameraId": "camera_legacy",
+            }
+        )
+
+        self.assertEqual(job["schemaVersion"], 1)
+        self.assertEqual(job["status"], "queued")
+        self.assertEqual(job["stage"], "queued")
+        self.assertEqual(job["source"]["submissionId"], "sub_legacy")
+        self.assertEqual(job["source"]["imageUrl"], "https://example.com/source.png")
+        self.assertEqual(job["source"]["cameraId"], "camera_legacy")
+        self.assertEqual(job["request"]["cameraId"], "camera_legacy")
+        self.assertEqual(job["request"]["leatherSuitId"], "suit_legacy")
+        self.assertEqual(job["processing"]["attemptCount"], 0)
+        self.assertEqual(validate_job_document(job), [])
+
     def test_validate_suit_document_requires_asset_reference(self) -> None:
-        errors = validate_suit_document({"leatherSuitId": "suit_1", "active": True})
+        errors = validate_suit_document({"schemaVersion": 1, "leatherSuitId": "suit_1", "active": True})
         self.assertIn("missing_suit_asset_reference", errors)
 
 
