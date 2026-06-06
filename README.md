@@ -430,6 +430,10 @@ The package API now uses safer path handling and writes:
 
 inside each package folder.
 
+Garment packages use schema version `1`. The runtime can use a saved package by passing `garment_package_name` to the try-on API instead of `garment_image_path`.
+
+Linux support boundaries and smoke validation are documented in `docs/LINUX_SUPPORT.md`.
+
 ## API
 
 ### `POST /api/tryon/run`

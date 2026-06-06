@@ -36,6 +36,7 @@ from services.service_manager import get_managed_services_status, perform_servic
 from services.single_task_lock import SingleTaskLock
 from services.worker_contracts import PROCESSING_PROFILE_GENERIC, PROCESSING_PROFILE_MOTOGP, normalize_processing_profile
 from services.tryon_setups import SETUP_PROVIDER_LOCAL, SETUP_PROVIDER_ONLINE, load_local_setups
+from services.garment_packages import PACKAGE_SCHEMA_VERSION, load_garment_package
 from services.worker_runtime import append_worker_event, load_worker_status, read_recent_worker_events
 from services.worker_settings import load_worker_settings, normalize_worker_settings, save_worker_settings
 
@@ -1457,7 +1458,8 @@ def _replace_fastapi_route(path: str, methods: set[str], endpoint) -> None:
 
 class TryOnApiRequest(BaseModel):
     person_image_path: str
-    garment_image_path: str
+    garment_image_path: str | None = None
+    garment_package_name: str | None = None
     output_image_path: str
     processing_profile: str = PROCESSING_PROFILE_GENERIC
     category: str = _CATEGORY_UPPER
@@ -1674,7 +1676,13 @@ def _run_tryon_api_job(payload: TryOnApiRequest) -> dict[str, object]:
         raise HTTPException(status_code=500, detail=f"Model load error: {_ERROR}")
 
     person_path = Path(payload.person_image_path).expanduser().resolve()
-    garment_path = Path(payload.garment_image_path).expanduser().resolve()
+    if payload.garment_package_name:
+        garment_package = load_garment_package(Path(PACKAGES_DIR), payload.garment_package_name)
+        garment_path = garment_package.garment_path
+    elif payload.garment_image_path:
+        garment_path = Path(payload.garment_image_path).expanduser().resolve()
+    else:
+        raise HTTPException(status_code=400, detail="garment_image_path or garment_package_name is required.")
     output_path = Path(payload.output_image_path).expanduser().resolve()
 
     if not person_path.exists():
@@ -1763,6 +1771,7 @@ if "fastapi_app" in globals():
         shutil.copy(source_image_path, destination_image_path)
 
         metadata = {
+            "schemaVersion": PACKAGE_SCHEMA_VERSION,
             "name": safe_package,
             "category": None,
             "mannequin_view": payload.mannequin_view,
@@ -1775,7 +1784,10 @@ if "fastapi_app" in globals():
             json.dump(metadata, f, indent=4)
 
         with open(package_dir / "package.json", "w") as f:
-            json.dump(payload.model_dump(), f, indent=4)
+            package_payload = payload.model_dump()
+            package_payload["schemaVersion"] = PACKAGE_SCHEMA_VERSION
+            package_payload["garment_file"] = "garment.png"
+            json.dump(package_payload, f, indent=4)
 
         return JSONResponse({"success": True, "path": str(package_dir)})
 

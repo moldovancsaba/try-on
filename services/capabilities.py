@@ -7,6 +7,7 @@ from typing import Any
 
 STATUS_READY = "ready"
 STATUS_UNAVAILABLE = "unavailable"
+STATUS_DEGRADED = "degraded"
 
 
 @dataclass(frozen=True)
@@ -201,10 +202,44 @@ def build_capability_report(models_root: Path, *, runtime_state: dict[str, Any] 
     for feature in features.values():
         status_counts[feature["status"]] += 1
 
+    feature_matrix = {
+        "try_on": {
+            "status": features["try_on"]["status"],
+            "support": "supported",
+            "contract": "Core local try-on generation. Requires all core model assets.",
+        },
+        "face_restoration": {
+            "status": STATUS_READY if assets["gfpgan_face_restore"]["ready"] else STATUS_UNAVAILABLE,
+            "support": "optional",
+            "contract": "Optional GFPGAN enhancement. Disabled when local face-restoration assets are missing.",
+        },
+        "garment_packages": {
+            "status": STATUS_READY,
+            "support": "supported",
+            "contract": "Studio-created garment packages are a supported local input contract.",
+        },
+        "fast_draft": {
+            "status": STATUS_UNAVAILABLE,
+            "support": "unsupported",
+            "contract": "Fast Draft / LCM LoRA is not part of this standalone build.",
+        },
+        "hold_product": {
+            "status": STATUS_UNAVAILABLE,
+            "support": "external-assets-required",
+            "contract": "Requires optional assets outside the core installer seed set.",
+        },
+        "image_to_video": {
+            "status": STATUS_UNAVAILABLE,
+            "support": "external-assets-required",
+            "contract": "Requires optional assets outside the core installer seed set.",
+        },
+    }
+
     return {
         "models_root": str(models_root),
         "assets": assets,
         "features": features,
+        "feature_matrix": feature_matrix,
         "summary": {
             "ready": status_counts[STATUS_READY],
             "degraded": status_counts["degraded"],
@@ -240,4 +275,10 @@ def render_capability_markdown(report: dict[str, Any], *, feature_keys: tuple[st
         lines.append("Warnings:")
         for warning in report["warnings"]:
             lines.append(f"- {warning}")
+    matrix = report.get("feature_matrix") or {}
+    if matrix:
+        lines.append("")
+        lines.append("Feature matrix:")
+        for key, item in matrix.items():
+            lines.append(f"- `{key}`: `{item['status']}` ({item['support']})")
     return "\n".join(lines)

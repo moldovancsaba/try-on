@@ -36,6 +36,15 @@ class CapabilityReportTests(unittest.TestCase):
             report = build_capability_report(root)
             self.assertEqual(tuple(report["features"].keys()), ("try_on",))
 
+    def test_feature_matrix_marks_unsupported_optional_features_unavailable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            report = build_capability_report(Path(tmpdir))
+            matrix = report["feature_matrix"]
+            self.assertEqual(matrix["garment_packages"]["status"], STATUS_READY)
+            self.assertEqual(matrix["fast_draft"]["status"], "unavailable")
+            self.assertEqual(matrix["fast_draft"]["support"], "unsupported")
+            self.assertEqual(matrix["image_to_video"]["support"], "external-assets-required")
+
 
 if __name__ == "__main__":
     unittest.main()

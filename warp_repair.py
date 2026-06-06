@@ -49,6 +49,18 @@ def _build_torso_anchor_mask(height: int, width: int) -> np.ndarray:
     return mask
 
 
+def texture_repair_decision(cloth_pil: Image.Image, warp_strength: float = 1.0) -> dict[str, float | str]:
+    if warp_strength <= 0:
+        return {"action": "skip", "reason": "disabled", "complexity": 0.0, "edge_ratio": 0.0, "lap_ratio": 0.0}
+    complexity = _garment_complexity_score(cloth_pil)
+    edge_ratio, lap_ratio = _texture_detail_score(cloth_pil)
+    if complexity >= _COMPLEXITY_BAILOUT_THRESHOLD:
+        return {"action": "skip", "reason": "high_complexity", "complexity": complexity, "edge_ratio": edge_ratio, "lap_ratio": lap_ratio}
+    if edge_ratio >= _DETAIL_EDGE_BAILOUT_THRESHOLD or lap_ratio >= _DETAIL_LAPLACIAN_BAILOUT:
+        return {"action": "skip", "reason": "fine_detail", "complexity": complexity, "edge_ratio": edge_ratio, "lap_ratio": lap_ratio}
+    return {"action": "run", "reason": "eligible", "complexity": complexity, "edge_ratio": edge_ratio, "lap_ratio": lap_ratio}
+
+
 def texture_repair_pass(
     cloth_pil: Image.Image,
     result_pil: Image.Image,
@@ -64,23 +76,25 @@ def texture_repair_pass(
     - High-complexity garments: skip the pass entirely and keep the diffusion
       output untouched. This is safer than scrambling text, logos, or stripes.
     """
-    if warp_strength <= 0:
+    decision = texture_repair_decision(cloth_pil, warp_strength)
+    if decision["reason"] == "disabled":
         return result_pil
 
     print("[VFX] Initiating TPS Deep Texture Sync...")
-    complexity = _garment_complexity_score(cloth_pil)
-    edge_ratio, lap_ratio = _texture_detail_score(cloth_pil)
+    complexity = float(decision["complexity"])
+    edge_ratio = float(decision["edge_ratio"])
+    lap_ratio = float(decision["lap_ratio"])
     print(f"[VFX] Garment complexity score: {complexity:.2f}")
     print(f"[VFX] Edge ratio: {edge_ratio:.3f}, Laplacian ratio: {lap_ratio:.3f}")
 
-    if complexity >= _COMPLEXITY_BAILOUT_THRESHOLD:
+    if decision["reason"] == "high_complexity":
         print(
             "[VFX] High-variance garment texture detected; skipping texture warp "
             "to preserve branding and typography."
         )
         return result_pil
 
-    if edge_ratio >= _DETAIL_EDGE_BAILOUT_THRESHOLD or lap_ratio >= _DETAIL_LAPLACIAN_BAILOUT:
+    if decision["reason"] == "fine_detail":
         print(
             "[VFX] Fine-detail garment detected; skipping texture warp to preserve "
             "logos and small print features."
