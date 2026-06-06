@@ -80,6 +80,29 @@ class WorkerPublicationTests(unittest.TestCase):
         worker.notify_camera_completion.assert_not_called()
         worker.emit_event.assert_called()
 
+    def test_successful_camera_completion_marks_notified_state(self) -> None:
+        worker = self.make_worker(
+            {
+                "jobId": "job_4",
+                "source": {"submissionId": "sub_4"},
+                "processing": {
+                    "resolvedSetupId": "setup_1",
+                    "resolvedSetupSource": "job.assigned",
+                    "resolvedSetupProfile": "local_profile",
+                    "resolvedSetupRevision": "rev_1",
+                },
+            }
+        )
+        worker.notify_camera_completion = Mock()
+
+        notified = worker.ensure_camera_notified("job_4", {"imageUrl": "https://cdn.example/result.png"})
+
+        self.assertTrue(notified)
+        worker.notify_camera_completion.assert_called_once()
+        update = worker.jobs.updates[-1]["$set"]
+        self.assertIn("processing.cameraNotifiedAt", update)
+        self.assertEqual(update["processing.publicationState"], "camera_notified")
+
 
 if __name__ == "__main__":
     unittest.main()
