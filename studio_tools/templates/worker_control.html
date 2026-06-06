@@ -61,6 +61,35 @@
             </article>
         </section>
 
+        <section class="card" aria-labelledby="retry-job-title">
+            <h2 id="retry-job-title">Retry a Job</h2>
+            <form id="retry-job-form" class="worker-settings-form">
+                <label class="worker-field">
+                    <span>Job ID</span>
+                    <input id="retry-job-id" type="text" placeholder="job_20260605..." required>
+                </label>
+                <label class="worker-field">
+                    <span>Target</span>
+                    <select id="retry-target">
+                        <option value="queued">queued</option>
+                        <option value="retry_wait">retry_wait</option>
+                    </select>
+                </label>
+                <label class="worker-field">
+                    <span>Delay Minutes (retry_wait only)</span>
+                    <input id="retry-delay" type="number" min="0" max="1440" value="0">
+                </label>
+                <label class="worker-field">
+                    <span>Reset Attempt Count</span>
+                    <input id="retry-reset-attempts" type="checkbox">
+                </label>
+                <div class="worker-actions">
+                    <button type="submit" class="btn">Retry Job</button>
+                </div>
+                <p id="retry-job-message" class="worker-message" aria-live="polite"></p>
+            </form>
+        </section>
+
         <section class="accent-panel" aria-labelledby="worker-settings-title">
             <h2 id="worker-settings-title">Worker Settings</h2>
             <form id="worker-settings-form" class="worker-settings-form">
@@ -215,6 +244,32 @@
                 await refreshStatus();
             } catch (error) {
                 setText("worker-settings-message", `Failed to save worker settings: ${error.message}`);
+            }
+        });
+        document.getElementById("retry-job-form").addEventListener("submit", async (event) => {
+            event.preventDefault();
+            const jobId = document.getElementById("retry-job-id").value.trim();
+            const payload = {
+                target: document.getElementById("retry-target").value,
+                delayMinutes: Number(document.getElementById("retry-delay").value || 0),
+                resetAttempts: document.getElementById("retry-reset-attempts").checked,
+                requestedBy: "local-operator",
+            };
+            if (!jobId) {
+                setText("retry-job-message", "Job ID is required.");
+                return;
+            }
+            setText("retry-job-message", `Retrying ${jobId}…`);
+            try {
+                const response = await fetchJson(`/api/tryon/jobs/${encodeURIComponent(jobId)}/retry`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(payload)
+                });
+                setText("retry-job-message", `Retry requested for ${response.jobId}. New status: ${response.status}.`);
+                await refreshStatus();
+            } catch (error) {
+                setText("retry-job-message", `Retry request failed: ${error.message}`);
             }
         });
 

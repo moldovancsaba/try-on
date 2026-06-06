@@ -39,6 +39,7 @@ The current API surface is:
 - `GET /api/worker/settings`
 - `POST /api/worker/settings`
 - `POST /api/worker/service-action`
+- `POST /api/worker/jobs/{jobId}/retry`
 - `GET /api/tryon/setups`
 - `POST /api/tryon/setups/{setupId}/use`
 - `POST /upload_garment`
@@ -143,11 +144,19 @@ TRYON_DEFAULT_SETUP_ID=default_motogp
 TRYON_QUEUE_ROOT=/Users/Shared/Projects/try-on/queue
 TRYON_SUIT_ASSET_ROOT=/Users/Shared/Projects/try-on/images
 TRYON_LOCAL_API_URL=http://127.0.0.1:7860/api/tryon/run
+SEGMIND_API_URL=https://api.segmind.com/v1/idm-vton
+SEGMIND_API_KEY=...
 TRYON_ALLOWED_PERSON_SOURCE_HOSTS=i.ibb.co
 TRYON_ALLOWED_SUIT_SOURCE_HOSTS=i.ibb.co
 TRYON_MAX_SOURCE_IMAGE_BYTES=26214400
 TRYON_MAX_SUIT_IMAGE_BYTES=26214400
 TRYON_ALLOW_REDIRECTS=false
+SEGMIND_API_TIMEOUT_SECONDS=120
+FAL_KEY=...
+FAL_BASE_URL=https://fal.run
+FAL_TRYON_MODEL=fal-ai/fashn/tryon/v1.6
+FAL_TRYON_TIMEOUT_SECONDS=300
+FAL_* variables are optional. If Fal is not configured, or Fal calls fail, jobs auto-fallback to segmind_idm_vton (when `SEGMIND_API_KEY` exists) and then to local motoGP try-on.
 TRYON_POLL_INTERVAL_SECONDS=60
 TRYON_LEASE_DURATION_SECONDS=600
 TRYON_MAX_ATTEMPTS=3
@@ -475,6 +484,271 @@ When `processing_profile=motogp_leather_magic`, the server enforces the full-bod
 - preserved head enabled
 - high-fidelity VAE enabled
 
+When `processing_profile=segmind_idm_vton`, the queue worker uses the external Segmind IDM-VTON API instead of the local CatVTON endpoint. For this profile, the worker sends:
+
+- `crop` (bool)
+- `category`
+- `seed`
+- `steps`
+- `force_dc`
+- `mask_only`
+- `garment_des`
+
+The worker uploads the downloaded person and garment inputs to ImgBB to provide public URLs for Segmind request fields:
+
+- `human_img`
+- `garm_img`
+
+Segmind profile prerequisites:
+
+- `SEGMIND_API_URL` set (defaults to `https://api.segmind.com/v1/idm-vton`)
+- `SEGMIND_API_KEY` set
+- `SEGMIND_API_TIMEOUT_SECONDS` tuned for expected latency
+
+When `processing_profile=fal_tryon`, the queue worker sends try-on requests to the Fal.ai fashn/tryon endpoint:
+
+- `person_image` and `garment_image` are uploaded to ImgBB and then sent to Fal queue API.
+- The payload uses:
+  - `mode: quality`
+  - `category` defaults to `dresses` for this preset
+  - `garment_photo_type: auto`
+  - `output_format: png`
+  - `seed: 42` for stable brand-safe output
+- Result retrieval uses Fal queued request tracking (`status_url` and `response_url`) with completion polling.
+
+Fal profile prerequisites:
+
+- `FAL_KEY` set to a valid Fal.ai API key.
+- `FAL_BASE_URL` optional (defaults to `https://fal.run`)
+- `FAL_TRYON_MODEL` optional, defaults to `fal-ai/fashn/tryon/v1.6`
+- `FAL_TRYON_TIMEOUT_SECONDS` optional for provider timeout tuning
+
+This profile is the same one used by the local catalog setup with setupId `fal_ai_tryon` in `.config/tryon_setups.json`.
+## Operations Playbooks
+
+### How to add models
+
+Use the shared model vault so app and worker resolve the same assets and checkpoint locations.
+
+1. Place model files under `TRYON_MODELS_ROOT` using the canonical structure.
+2. Keep model names aligned with runtime expectations in `model_paths.py`.
+3. Validate the vault state and generate a manifest:
+
+```bash
+./.venv311/bin/python scripts/audit_models.py --write-manifest
+```
+
+4. Run sync operations whenever the vault changes:
+
+```bash
+./.venv311/bin/python scripts/sync_models.py --profile core --plan
+./.venv311/bin/python scripts/sync_models.py --profile core --write-manifest
+```
+
+5. Restart app and worker and verify with `GET /api/capabilities`.
+
+Model ownership checklist:
+
+1. Confirm model family placement before launch:
+   - `processors/catvton-segmentation` (SCHP + DensePose checkpoints)
+   - `checkpoints/sd15-inpainting`
+   - `vae/sd15-vae-ft-mse`
+   - `processors/face-restoration`
+2. Confirm permissions and ownership so the app process can read all paths.
+3. Never keep duplicate copies in different top-level folders; pin to one canonical source.
+4. If adding a new family, add a profile contract first (sync + manifest first), then update startup env only after dry-run checks pass.
+
+Post-change verification:
+
+1. Run:
+
+```bash
+ls -la "${TRYON_MODELS_ROOT:-/Users/Shared/Models}"
+```
+
+2. Confirm manifest update:
+
+```bash
+cat "${TRYON_MODELS_ROOT:-/Users/Shared/Models}/manifest.json"
+```
+
+3. Generate a one-off inference smoke run with a known fixture:
+
+```bash
+./.venv311/bin/python -m pytest -q tests/test_model_sync.py tests/test_worker_contracts.py
+```
+
+If these tests are not runnable in your environment, run a manual smoke job via UI/API and confirm a clean output path.
+
+### How to manage APIs
+
+Keep runtime keys and endpoints in `.env.tryon-worker` and rotate them when ownership changes.
+
+1. Maintain base queue/auth settings: `MONGODB_ATLAS_URI`, `MONGODB_DB_NAME`, `IMGBB_API_KEY`, `CAMERA_TRYON_COMPLETE_URL`, `CAMERA_TRYON_INTERNAL_SECRET`.
+2. Configure Segmind only when `segmind_idm_vton` is enabled:
+   `SEGMIND_API_URL`, `SEGMIND_API_KEY`, `SEGMIND_API_TIMEOUT_SECONDS`.
+3. Configure Fal only when `fal_tryon` is enabled:
+   `FAL_KEY`, `FAL_BASE_URL`, `FAL_TRYON_MODEL`, `FAL_TRYON_TIMEOUT_SECONDS`.
+4. Verify source download and callbacks with:
+
+```bash
+./.venv311/bin/python scripts/verify_tryon_worker_setup.py
+```
+
+5. Confirm provider status and fallback behavior from `GET /api/worker/status`.
+
+Provider fallback behavior (safe defaults):
+
+- If Fal is enabled and healthy, Fal setups use Fal queue API.
+- If Fal is missing or fails repeatedly, worker falls back to Segmind when possible.
+- If Segmind is not available, worker falls back to local motoGP pipeline.
+
+When rotating secrets:
+
+1. Update `.env.tryon-worker` and restart worker immediately after.
+2. Invalidate old credentials in provider dashboards where possible.
+3. Confirm no active jobs are using stale tokens by watching `processing.stage` transitions in Atlas.
+
+Common API-related failure checks:
+
+- worker logs: `fal_auth_failed`, `segmind_api_failed`, `imgbb_upload_failed`
+- app logs: provider profile fallback or startup warning events
+- `GET /api/worker/status` should still return `workerRunning`.
+
+Network and host hardening:
+
+1. Keep host allowlists narrow.
+2. Keep `TRYON_ALLOW_REDIRECTS=false` unless a specific proxy/host flow requires redirects.
+3. Keep max bytes consistent with camera upload limits to avoid partial reads.
+
+### How to improve presets
+
+Edit `.config/tryon_setups.json` and keep one behavior change per revision.
+
+1. Keep `setupId`, `provider`, `rank`, and `isDefault` intention clear.
+2. For local presets, adjust only `steps`, `guidance`, `mask_sharpness`, `mask_padding`, and profile flags.
+3. For transparent PNG-safe behavior, apply these guardrails before changing anything else:
+   - Use `mask_sharpness >= 15` to reduce feather-induced halos.
+   - Keep `mask_padding <= 4` to avoid background expansion into transparent cloth edges.
+   - Keep `detail_boost <= 0.3` unless a human review explicitly approves stronger detail restoration.
+4. For online presets, encode brand-preservation requirements in `garment_des` with hard constraints:
+   no halo, no transparent fill, exact logos/text placement, edge preservation.
+5. Add explicit alpha-safe language when garments use transparent PNG boundaries.
+6. Run a quick validation set before rollout:
+   - opaque garment control
+   - transparent garment with anti-aliased edges
+   - transparent garment with logos/text
+7. Increase `revision` for every meaningful tweak.
+8. Record a short changelog line in commit message (e.g. "preset: tighten alpha-safe mask bounds").
+9. If changing multiple presets, bump all touched presets in one atomic release review.
+
+Preset shape reference:
+
+```json
+{
+  "setupId": "example_preset",
+  "provider": "local",
+  "name": "Example Preset",
+  "description": "Use for high-contrast transparent tops.",
+  "active": true,
+  "isDefault": false,
+  "rank": 30,
+  "revision": "example-v2",
+  "config": {
+    "processing_profile": "motogp_leather_magic",
+    "steps": 72,
+    "guidance": 4.8,
+    "mask_sharpness": 18,
+    "mask_padding": 4,
+    "garment_des": "Preserve garment details and avoid alpha fill."
+  }
+}
+```
+
+Local vs online tuning guidance:
+
+- Local profile changes affect the CatVTON/Pipeline path and should be validated with transparent PNG edge cases.
+- Online profile changes mainly affect API prompt fidelity and should be validated with diverse logo/text garments.
+- For transparent garment safety, prioritize:
+  - higher mask sharpness where needed,
+  - tighter alpha-constrained padding,
+  - explicit no-fill/no-bleed instructions in `garment_des` for online profiles.
+
+Rollback approach:
+
+1. Revert `revision` to prior value for affected presets.
+2. Restart app/worker to force re-sync to Atlas metadata.
+3. Keep the previous working setup pinned in `camera_setup_preferences` while investigating.
+
+### How to update MongoDB Atlas presets
+
+Atlas stores metadata (`tryon_setups`) while this repo keeps full tuning payload in `.config/tryon_setups.json`.
+
+1. Edit `.config/tryon_setups.json` and update each changed preset’s `revision`.
+2. Reload and sanity-check catalog JSON before rollout:
+
+```bash
+./.venv311/bin/python - <<'PY'
+import json
+from pathlib import Path
+
+payload = json.loads(Path('.config/tryon_setups.json').read_text(encoding='utf-8'))
+assert isinstance(payload, list)
+assert all('setupId' in item and 'config' in item for item in payload)
+print(f'Loaded {len(payload)} setup entries')
+PY
+```
+
+3. Restart app and worker so startup sync writes latest metadata to Atlas.
+4. Verify via API:
+
+```bash
+curl "http://127.0.0.1:7860/api/tryon/setups?cameraId=<cameraId>"
+```
+
+5. Confirm Atlas collections:
+- `tryon_setups`: expected `setupId`, `name`, `isDefault`, `rank`, `revision`.
+- `camera_setup_preferences`: current setup pointer per camera.
+6. Pin setup choice for a camera from API:
+
+```bash
+curl -X POST "http://127.0.0.1:7860/api/tryon/setups/<setupId>/use" \
+  -H "Content-Type: application/json" \
+  -d '{"cameraId": "camera_123"}'
+```
+
+7. Roll out gradually: one camera cohort at a time and compare results before broader adoption.
+
+Collection-level contract summary:
+
+- `tryon_setups`: one document per `setupId`, including metadata used for UI ranking/defaulting.
+- `camera_setup_preferences`: one document per `cameraId`, storing most recent selected setup.
+- `tryon_jobs`: per job snapshot for execution path and resolved setup profile.
+
+Suggested Atlas update procedure:
+
+1. Edit [`.config/tryon_setups.json`](/Users/Shared/Projects/try-on/.config/tryon_setups.json:1).
+2. Bump all touched revisions.
+3. Restart both app + worker.
+4. Confirm sync from app/worker logs (setup upsert events).
+5. Verify via API for one representative camera:
+
+```bash
+curl "http://127.0.0.1:7860/api/tryon/setups?cameraId=<cameraId>"
+```
+
+6. Verify in Atlas:
+
+- `setupId`, `isDefault`, `rank`, `revision` in `tryon_setups`
+- correct active setup in `camera_setup_preferences`
+- no stale `setupId` references in in-flight jobs.
+
+Disaster recovery:
+
+1. Keep legacy fallback metadata intact (`default_motogp`) so worker can continue processing.
+2. If a bad sync propagates, temporarily pin to local fallback setup in camera or worker route while correcting catalog JSON.
+3. Re-deploy corrected JSON and rerun verification steps.
+
 ### `GET /api/worker/status`
 
 Returns the current worker runtime snapshot, saved worker settings, recent structured worker events, and queue counts when Atlas credentials are available.
@@ -504,6 +778,42 @@ Example:
   "pollIntervalSeconds": 300,
   "updatedBy": "local-operator"
 }
+```
+
+### `POST /api/worker/jobs/{jobId}/retry`
+
+Moves a retryable job back into processing flow.
+
+Request body:
+
+```json
+{
+  "target": "queued",
+  "delayMinutes": 0,
+  "requestedBy": "local-operator",
+  "resetAttempts": false
+}
+```
+
+- `target` must be `queued` or `retry_wait`.
+- `delayMinutes` is allowed only when `target=retry_wait` and must be `0` to `1440`.
+- `requestedBy` is optional operator metadata, defaults to `local-operator`.
+- `resetAttempts` clears `processing.attemptCount` when `true`.
+
+Rules:
+
+- Returns `409` when the job is active (`claimed`, `processing`, `uploading_result`, `notifying_camera`), or when status is not retryable.
+- Returns `404` when jobId is not found.
+- Returns `503` when Atlas credentials are missing/unavailable.
+- Clears transient failure markers (`error`, `processing.lastError`, `processing.publicationError`) and lease/heartbeat fields before re-queueing.
+- Logs worker event `job_retried`.
+
+Example:
+
+```bash
+curl -X POST "http://127.0.0.1:7860/api/worker/jobs/job_20260605121640_9d55b24b/retry" \
+  -H "Content-Type: application/json" \
+  -d '{"target":"retry_wait","delayMinutes":10,"requestedBy":"operator","resetAttempts":true}'
 ```
 
 ### `POST /upload_garment`

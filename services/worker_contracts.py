@@ -7,7 +7,14 @@ SUPPORTED_JOB_SCHEMA_VERSIONS = {None, 1}
 SUPPORTED_SUIT_SCHEMA_VERSIONS = {None, 1}
 PROCESSING_PROFILE_GENERIC = "generic"
 PROCESSING_PROFILE_MOTOGP = "motogp_leather_magic"
-PROCESSING_PROFILES = {PROCESSING_PROFILE_GENERIC, PROCESSING_PROFILE_MOTOGP}
+PROCESSING_PROFILE_SEGMIND_IDM_VTON = "segmind_idm_vton"
+PROCESSING_PROFILE_FAL_TRYON = "fal_tryon"
+PROCESSING_PROFILES = {
+    PROCESSING_PROFILE_GENERIC,
+    PROCESSING_PROFILE_MOTOGP,
+    PROCESSING_PROFILE_SEGMIND_IDM_VTON,
+    PROCESSING_PROFILE_FAL_TRYON,
+}
 JOB_STATUSES = {
     "queued",
     "claimed",
@@ -24,6 +31,10 @@ def normalize_processing_profile(value: str | None) -> str:
     raw = (value or "").strip().lower()
     if raw in {"motogp", "motogp_leather_magic", "motogp-leather-magic"}:
         return PROCESSING_PROFILE_MOTOGP
+    if raw in {"segmind", "segmind_idm_vton", "segmind-idm-vton", "idm_vton", "idm-vton"}:
+        return PROCESSING_PROFILE_SEGMIND_IDM_VTON
+    if raw in {"fal", "fal_tryon", "fal-fashn", "fashn", "fal-tryon", "fal_tryon", "fashn_tryon"}:
+        return PROCESSING_PROFILE_FAL_TRYON
     return PROCESSING_PROFILE_GENERIC
 
 

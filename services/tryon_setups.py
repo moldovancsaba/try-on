@@ -5,15 +5,23 @@ from typing import Any
 import json
 import os
 
+from services.worker_contracts import (
+    PROCESSING_PROFILE_FAL_TRYON,
+    PROCESSING_PROFILE_SEGMIND_IDM_VTON,
+)
+
 
 TRYON_SETUP_FIELD_ALLOWLIST = {
     "processing_profile",
+    "crop",
     "category",
     "sleeve_length",
     "pant_length",
     "resolution",
+    "force_dc",
     "steps",
     "guidance",
+    "mask_only",
     "seed",
     "show_mask",
     "mask_sharpness",
@@ -27,10 +35,30 @@ TRYON_SETUP_FIELD_ALLOWLIST = {
     "composite_strength",
     "enable_deep_texture",
     "warp_strength",
+    "garment_des",
 }
 
 SETUP_CATALOG_ENV = "TRYON_SETUP_CATALOG_PATH"
 DEFAULT_SETUP_CATALOG_PATH = ".config/tryon_setups.json"
+SETUP_PROVIDER_LOCAL = "local"
+SETUP_PROVIDER_ONLINE = "online"
+
+
+def _normalize_provider(value: Any, *, processing_profile: str = "") -> str:
+    raw = _normalize_text(value)
+    if raw:
+        raw = raw.lower()
+        if raw in {"local", "online", "cloud"}:
+            return "online" if raw == "cloud" else raw
+
+    profile = processing_profile.strip().lower()
+    if profile in {
+        PROCESSING_PROFILE_SEGMIND_IDM_VTON,
+        PROCESSING_PROFILE_FAL_TRYON,
+    }:
+        return SETUP_PROVIDER_ONLINE
+    return SETUP_PROVIDER_LOCAL
+
 
 
 def _normalize_text(value: Any) -> str | None:
@@ -56,12 +84,14 @@ def _coerce_setup_entry(entry: dict[str, Any], *, source_path: Path) -> dict[str
 
     camera_id = _normalize_text(entry.get("cameraId"))
     description = _normalize_text(entry.get("description"))
+    provider = _normalize_provider(entry.get("provider"), processing_profile=str(config.get("processing_profile", "")))
 
     return {
         "setupId": setup_id,
         "name": _normalize_text(entry.get("name")) or setup_id,
         "description": description,
         "cameraId": camera_id,
+        "provider": provider,
         "active": bool(entry.get("active", True)),
         "isDefault": bool(entry.get("isDefault", False)),
         "rank": _normalize_int(entry.get("rank"), 0),

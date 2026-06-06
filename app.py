@@ -10,7 +10,7 @@ import shutil
 import sys
 import time
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +22,7 @@ from model_paths import (
     migrate_legacy_settings,
     save_settings as save_app_settings,
 )
+from pymongo import UpdateOne
 from services.capabilities import (
     build_capability_report,
     feature_is_available,
@@ -34,7 +35,7 @@ from services.mongo_uri import normalize_mongodb_uri
 from services.service_manager import get_managed_services_status, perform_service_action
 from services.single_task_lock import SingleTaskLock
 from services.worker_contracts import PROCESSING_PROFILE_GENERIC, PROCESSING_PROFILE_MOTOGP, normalize_processing_profile
-from services.tryon_setups import load_local_setups
+from services.tryon_setups import SETUP_PROVIDER_LOCAL, SETUP_PROVIDER_ONLINE, load_local_setups
 from services.worker_runtime import append_worker_event, load_worker_status, read_recent_worker_events
 from services.worker_settings import load_worker_settings, normalize_worker_settings, save_worker_settings
 
@@ -307,6 +308,98 @@ def _normalize_category(value: str | None) -> str:
     return _CATEGORY_ALIASES.get(value, value if value in _CATEGORY_CHOICES else _CATEGORY_UPPER)
 
 
+def _has_alpha_in_image(cloth_img: Any) -> bool:
+    if not hasattr(cloth_img, "getbands") or not hasattr(cloth_img, "info") or not hasattr(cloth_img, "mode"):
+        return False
+    if "A" in cloth_img.getbands():
+        return True
+    return cloth_img.mode == "P" and cloth_img.info.get("transparency") is not None
+
+
+def _garment_image_has_alpha(path_value: str | None) -> bool:
+    if not path_value:
+        return False
+    image_path = Path(path_value).expanduser()
+    if not image_path.exists():
+        return False
+    try:
+        with Image.open(image_path) as image:
+            return _has_alpha_in_image(image)
+    except Exception:
+        return False
+
+
+def _normalize_garment_alpha_image(cloth_img):
+    if _has_alpha_in_image(cloth_img):
+        return cloth_img
+    if getattr(cloth_img, "mode", "") == "P" and cloth_img.info.get("transparency") is not None:
+        return cloth_img.convert("RGBA")
+    return None
+
+
+def _alpha_mask_from_garment(cloth_img, target_size: tuple[int, int]):
+    rgba_img = _normalize_garment_alpha_image(cloth_img)
+    if rgba_img is None:
+        return None
+
+    import numpy as np
+    from PIL import Image
+
+    alpha = rgba_img.getchannel("A")
+    alpha_np = np.array(alpha, dtype=np.uint8)
+    if alpha_np.size == 0 or alpha_np.max() <= 0 or np.all(alpha_np >= 255):
+        return None
+
+    w, h = alpha.size
+    target_w, target_h = target_size
+    if w / h < target_w / target_h:
+        new_h = target_h
+        new_w = w * target_h // h
+    else:
+        new_w = target_w
+        new_h = h * target_w // w
+
+    resized_alpha = alpha.resize((new_w, new_h), Image.LANCZOS)
+    padded_alpha = Image.new("L", target_size, 0)
+    padded_alpha.paste(resized_alpha, ((target_w - new_w) // 2, (target_h - new_h) // 2))
+    return padded_alpha.point(lambda p: 255 if p >= 8 else 0, mode="L")
+
+def _alpha_fill_color_from_garment_alpha(rgba: Any, alpha: Any) -> tuple[int, int, int]:
+    import numpy as np
+
+    rgb_np = np.array(rgba.convert("RGB"), dtype=np.float32)
+    alpha_np = np.array(alpha, dtype=np.uint8)
+    rgb_samples = rgb_np[alpha_np >= 254]
+    if rgb_samples.size == 0:
+        rgb_samples = rgb_np[alpha_np >= 48]
+    if rgb_samples.size == 0:
+        rgb_samples = rgb_np[alpha_np > 0]
+    if rgb_samples.size == 0:
+        return (0, 0, 0)
+
+    mean_rgb = np.rint(rgb_samples.mean(axis=0)).astype(np.int16)
+    return tuple(int(np.clip(value, 0, 255)) for value in mean_rgb.tolist())
+
+def _flatten_garment_rgb_on_white(cloth_img):
+    rgba = _normalize_garment_alpha_image(cloth_img)
+    if rgba is None:
+        return cloth_img.convert("RGB")
+
+    from PIL import Image
+    import numpy as np
+
+    alpha = rgba.getchannel("A")
+    alpha_np = np.array(alpha, dtype=np.uint8)
+    if alpha_np.size == 0 or np.all(alpha_np >= 255):
+        return rgba.convert("RGB")
+
+    alpha_binary = alpha.point(lambda p: 255 if p >= 8 else 0, mode="L")
+    fill_color = _alpha_fill_color_from_garment_alpha(rgba, alpha)
+    neutral = Image.new("RGB", rgba.size, fill_color)
+    neutral.paste(rgba.convert("RGB"), mask=alpha_binary)
+    return neutral
+
+
 def _build_identity_masks(mask_result: dict[str, Any], include_hair: bool = True) -> dict[str, Image.Image]:
     """
     Build the head-preservation mask from CatVTON's SCHP LIP parsing output.
@@ -560,7 +653,7 @@ def _run_inference_locked(person_img, cloth_img, category, sleeve_length, pant_l
     import torch
     import random
     import json
-    from PIL import Image
+    from PIL import Image, ImageOps
     from diffusers.image_processor import VaeImageProcessor
     from diffusers import AutoencoderKL
     from catvton.utils import numpy_to_pil
@@ -640,13 +733,25 @@ def _run_inference_locked(person_img, cloth_img, category, sleeve_length, pant_l
     if cloth_img is not None and not isinstance(cloth_img, Image.Image):
         cloth_img = Image.fromarray(cloth_img)
 
+    person_img = ImageOps.exif_transpose(person_img)
+    if cloth_img is not None:
+        cloth_img = ImageOps.exif_transpose(cloth_img)
+
     # Standalone build uses the stable high-quality render path only.
     target_size = (768, 1024)
+    cloth_alpha_mask = None
+    if cloth_img is not None:
+        cloth_alpha_mask = _alpha_mask_from_garment(cloth_img, target_size)
+        if cloth_alpha_mask is not None:
+            mask_sharpness = max(int(mask_sharpness), 15)
+            if mask_padding > 4:
+                mask_padding = 4
+        cloth_img = _flatten_garment_rgb_on_white(cloth_img)
     person = resize_and_crop(person_img.convert("RGB"), target_size)
     cloth = resize_and_padding(cloth_img.convert("RGB"), target_size) if cloth_img is not None else None
     
     # Masking logic: Invert sharpness to blur (15 sharpness = 0 blur)
-    actual_blur = 15 - int(mask_sharpness)
+    actual_blur = max(0.0, 15 - int(mask_sharpness))
     t_start = time.monotonic()
     progress(0, desc="Segmenting body...")
     
@@ -684,6 +789,10 @@ def _run_inference_locked(person_img, cloth_img, category, sleeve_length, pant_l
     silhouette_arr = np.array(person_silhouette_mask, dtype=np.uint8)
     mask_arr = np.where(silhouette_arr > 0, mask_arr, 0).astype(np.uint8)
     mask_pil = Image.fromarray(mask_arr, mode="L")
+    if cloth_alpha_mask is not None:
+        constrained_mask = Image.composite(mask_pil, Image.new("L", mask_pil.size, 0), cloth_alpha_mask)
+        if constrained_mask.getbbox():
+            mask_pil = constrained_mask
 
     # Fix hem V-cut artefact: expand the mask 8px downward so the composite
     # does not clip the bottom edge of the garment into a V-shape.
@@ -823,7 +932,8 @@ def _run_inference_locked(person_img, cloth_img, category, sleeve_length, pant_l
             # Use the garment mask to isolate the sharpening to the cloth only
             if mask_pil is not None:
                 garment_mask = mask_pil.copy().convert("L")
-                garment_mask = garment_mask.filter(ImageFilter.GaussianBlur(radius=2))
+                if cloth_alpha_mask is None:
+                    garment_mask = garment_mask.filter(ImageFilter.GaussianBlur(radius=2))
                 
                 raw_img = Image.fromarray(img_np)
                 result_img = Image.composite(sharpened_pil, raw_img, garment_mask)
@@ -844,7 +954,8 @@ def _run_inference_locked(person_img, cloth_img, category, sleeve_length, pant_l
     # hands, and background details do not get repainted by diffusion.
     if mask_pil is not None:
         progress(0.915, desc="Preserving non-garment content...")
-        result_img = _composite_generated_garment(person, result_img, mask_pil, feather_radius=2.0)
+        composite_radius = 0.0 if cloth_alpha_mask is not None else 2.0
+        result_img = _composite_generated_garment(person, result_img, mask_pil, feather_radius=composite_radius)
 
     # Always preserve hand regions from the source photo to prevent accidental occlusion.
     if hand_mask_pil is not None:
@@ -1391,6 +1502,13 @@ class ServiceActionRequest(BaseModel):
     requestedBy: str | None = None
 
 
+class RetryWorkerJobRequest(BaseModel):
+    target: str = "queued"
+    delayMinutes: int = 0
+    requestedBy: str | None = None
+    resetAttempts: bool = False
+
+
 class TryOnSetupSelectionRequest(BaseModel):
     cameraId: str
 
@@ -1403,11 +1521,16 @@ def _apply_processing_profile(payload: TryOnApiRequest) -> TryOnApiRequest:
         payload.sleeve_length = "default"
         payload.pant_length = "default"
         payload.resolution = "High Quality"
+        has_alpha_garment = _garment_image_has_alpha(payload.garment_image_path)
         # High-fidelity Leather route tuned for logo and print clarity.
         payload.steps = max(int(payload.steps), 50)
         payload.guidance = max(float(payload.guidance), 4.6)
         payload.mask_sharpness = max(int(payload.mask_sharpness), 12)
         payload.mask_padding = max(int(payload.mask_padding), 10)
+        if has_alpha_garment:
+            # Transparent PNG garments should use tighter constraints to avoid halo fill.
+            payload.mask_padding = min(payload.mask_padding, 4)
+            payload.mask_sharpness = max(payload.mask_sharpness, 16)
         payload.detail_boost = max(0.0, min(float(payload.detail_boost), 0.25))
         payload.face_restore_strength = 0.0
         payload.preserve_head = True
@@ -1444,6 +1567,61 @@ def _get_tryon_db():
     mongodb_uri, mongodb_db_name = cfg
     client = MongoClient(normalize_mongodb_uri(mongodb_uri), serverSelectionTimeoutMS=3000)
     return client, client[mongodb_db_name]
+
+
+def _now_utc_iso() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _plus_minutes_iso(minutes: int) -> str:
+    if minutes <= 0:
+        return _now_utc_iso()
+    return (datetime.now(timezone.utc) + timedelta(minutes=minutes)).isoformat().replace("+00:00", "Z")
+
+
+def _normalize_retry_target(target: str) -> str:
+    normalized = (target or "").strip().lower()
+    if normalized in {"queued", "queue"}:
+        return "queued"
+    if normalized in {"retry_wait", "retrywait", "retry-wait", "retry"}:
+        return "retry_wait"
+    raise ValueError("target must be one of 'queued' or 'retry_wait'")
+
+
+def _sync_tryon_setups_from_local_catalog(db, setup_collection_name: str, local_setups: dict[str, dict[str, Any]]) -> None:
+    if not local_setups:
+        return
+    now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    operations: list[UpdateOne] = []
+    for setup in local_setups.values():
+        setup_id = str(setup.get("setupId") or "").strip()
+        if not setup_id or not bool(setup.get("active", True)):
+            continue
+        operations.append(
+            UpdateOne(
+                {"setupId": setup_id},
+                {
+                    "$set": {
+                        "name": str(setup.get("name") or setup_id),
+                        "description": setup.get("description"),
+                        "cameraId": setup.get("cameraId"),
+                        "active": True,
+                        "isDefault": bool(setup.get("isDefault")),
+                        "rank": int(setup.get("rank") or 0),
+                        "revision": str(setup.get("revision") or ""),
+                        "provider": str(setup.get("provider") or SETUP_PROVIDER_LOCAL),
+                        "updatedAt": now,
+                    },
+                    "$setOnInsert": {
+                        "setupId": setup_id,
+                        "createdAt": now,
+                    },
+                },
+                upsert=True,
+            )
+        )
+    if operations:
+        db[setup_collection_name].bulk_write(operations, ordered=False)
 
 
 def _tryon_collection_names() -> tuple[str, str]:
@@ -1486,7 +1664,7 @@ def _build_worker_status_report() -> dict[str, object]:
 
 
 def _run_tryon_api_job(payload: TryOnApiRequest) -> dict[str, object]:
-    from PIL import Image
+    from PIL import Image, ImageOps
 
     payload = _apply_processing_profile(payload)
 
@@ -1504,8 +1682,8 @@ def _run_tryon_api_job(payload: TryOnApiRequest) -> dict[str, object]:
     if not garment_path.exists():
         raise HTTPException(status_code=400, detail=f"Garment image not found: {garment_path}")
 
-    person_img = Image.open(person_path).convert("RGB")
-    cloth_img = Image.open(garment_path).convert("RGB")
+    person_img = ImageOps.exif_transpose(Image.open(person_path))
+    cloth_img = ImageOps.exif_transpose(Image.open(garment_path))
 
     result_img = None
     mask_img = None
@@ -1635,13 +1813,19 @@ if "fastapi_app" in globals():
         return JSONResponse(response)
 
     @fastapi_app.get("/api/tryon/setups")
-    async def list_tryon_setups(cameraId: str | None = None):
+    async def list_tryon_setups(cameraId: str | None = None, provider: str | None = None):
         camera_id = _normalize_opt_text(cameraId)
+        provider_filter = _normalize_opt_text(provider)
+        if provider_filter == "cloud":
+            provider_filter = SETUP_PROVIDER_ONLINE
+        if provider_filter and provider_filter not in {SETUP_PROVIDER_LOCAL, SETUP_PROVIDER_ONLINE}:
+            raise HTTPException(status_code=400, detail="provider must be one of: local, online")
         client, db = _get_tryon_db()
         if not db:
             raise HTTPException(status_code=503, detail="Try-on MongoDB is not configured.")
         setup_collection_name, _ = _tryon_collection_names()
         local_setups = load_local_setups(_ROOT)
+        _sync_tryon_setups_from_local_catalog(db, setup_collection_name, local_setups)
         query = {"active": True}
         if camera_id:
             query["$or"] = [
@@ -1651,6 +1835,8 @@ if "fastapi_app" in globals():
             ]
         else:
             query["$or"] = [{"cameraId": {"$exists": False}}, {"cameraId": None}]
+        if provider_filter:
+            query["provider"] = provider_filter
         try:
             setups = []
             for setup in db[setup_collection_name].find(query).sort([("isDefault", -1), ("cameraId", 1), ("rank", 1), ("name", 1)]):
@@ -1661,12 +1847,14 @@ if "fastapi_app" in globals():
                 if not local_setup:
                     continue
                 config_payload = dict(local_setup.get("config") or {})
+                resolved_provider = _normalize_opt_text(local_setup.get("provider")) or SETUP_PROVIDER_LOCAL
                 setups.append(
                     {
                         "setupId": setup_id,
                         "name": local_setup.get("name") or setup.get("name") or setup_id,
                         "description": local_setup.get("description") or setup.get("description"),
                         "cameraId": _normalize_opt_text(local_setup.get("cameraId")) or _normalize_opt_text(setup.get("cameraId")),
+                        "provider": resolved_provider,
                         "isDefault": bool(local_setup.get("isDefault")),
                         "rank": int(local_setup.get("rank") or setup.get("rank") or 0),
                         "revision": local_setup.get("revision"),
@@ -1706,6 +1894,7 @@ if "fastapi_app" in globals():
                     "isDefault": bool(local_setup.get("isDefault")),
                     "rank": int(local_setup.get("rank") or 0),
                     "revision": local_setup.get("revision"),
+                    "provider": local_setup.get("provider") or SETUP_PROVIDER_LOCAL,
                     "updatedAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
                 },
                 "$setOnInsert": {"createdAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")},
@@ -1804,6 +1993,113 @@ if "fastapi_app" in globals():
             app_root=_ROOT,
         )
         return JSONResponse(result)
+
+    @fastapi_app.post("/api/worker/jobs/{job_id}/retry")
+    async def worker_job_retry_api(job_id: str, payload: RetryWorkerJobRequest):
+        runtime_state = load_worker_status(app_root=_ROOT)
+        if str(runtime_state.get("currentJobId") or "") == job_id and _is_runtime_job_active(runtime_state):
+            raise HTTPException(
+                status_code=409,
+                detail=f"Job {job_id} is currently active and cannot be retried.",
+            )
+        try:
+            target_status = _normalize_retry_target(payload.target)
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+
+        delay_minutes = int(payload.delayMinutes or 0)
+        if delay_minutes < 0:
+            raise HTTPException(status_code=400, detail="delayMinutes must be >= 0.")
+        if delay_minutes > 24 * 60:
+            raise HTTPException(status_code=400, detail="delayMinutes must be <= 1440.")
+        if target_status == "queued" and delay_minutes > 0:
+            raise HTTPException(status_code=400, detail="delayMinutes is only supported when target is retry_wait.")
+
+        client, db = _get_tryon_db()
+        if db is None:
+            raise HTTPException(status_code=503, detail="MongoDB Atlas configuration is unavailable.")
+
+        requested_by = (payload.requestedBy or "local-operator").strip() or "local-operator"
+        now = _now_utc_iso()
+        try:
+            job = db["tryon_jobs"].find_one({"jobId": job_id})
+            if not job:
+                raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+
+            current_status = str(job.get("status") or "").strip().lower()
+            if current_status in {"claimed", "processing", "uploading_result", "notifying_camera"}:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Job {job_id} is in active status '{current_status}' and cannot be retried.",
+                )
+            if current_status and current_status not in {"queued", "retry_wait", "failed"}:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Job {job_id} is in non-retryable status '{current_status}'.",
+                )
+
+            next_attempt_at = _plus_minutes_iso(delay_minutes) if target_status == "retry_wait" else None
+            update_fields: dict[str, Any] = {
+                "status": target_status,
+                "stage": "queued" if target_status == "queued" else "failed",
+                "updatedAt": now,
+                "error": {"code": None, "message": None, "details": None},
+                "processing.leaseExpiresAt": None,
+                "processing.finishedAt": None,
+                "processing.lastHeartbeatAt": None,
+                "processing.lastError": None,
+                "processing.nextAttemptAt": next_attempt_at,
+            }
+            if payload.resetAttempts:
+                update_fields["processing.attemptCount"] = 0
+
+            db["tryon_jobs"].update_one(
+                {"jobId": job_id},
+                {
+                    "$set": update_fields,
+                    "$unset": {
+                        "processing.publicationError": "",
+                        "processing.startedAt": "",
+                    },
+                },
+            )
+            append_worker_event(
+                {
+                    "jobId": job_id,
+                    "at": now,
+                    "level": "info",
+                    "event": "job_retried",
+                    "status": target_status,
+                    "stage": "retry_requested",
+                    "details": {
+                        "previousStatus": current_status or "",
+                        "targetStatus": target_status,
+                        "delayMinutes": delay_minutes,
+                        "resetAttempts": bool(payload.resetAttempts),
+                        "requestedBy": requested_by,
+                    },
+                },
+                app_root=_ROOT,
+            )
+            return JSONResponse(
+                {
+                    "jobId": job_id,
+                    "previousStatus": current_status or "",
+                    "status": target_status,
+                    "stage": "queued" if target_status == "queued" else "failed",
+                    "nextAttemptAt": next_attempt_at,
+                    "retryScheduled": target_status == "retry_wait",
+                    "resetAttempts": bool(payload.resetAttempts),
+                    "requestedBy": requested_by,
+                    "updatedAt": now,
+                }
+            )
+        finally:
+            client.close()
+
+    @fastapi_app.post("/api/tryon/jobs/{job_id}/retry")
+    async def tryon_job_retry_api(job_id: str, payload: RetryWorkerJobRequest):
+        return await worker_job_retry_api(job_id, payload)
 
 
 _original_inference = _inference

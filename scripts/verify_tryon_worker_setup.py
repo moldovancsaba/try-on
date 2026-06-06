@@ -20,7 +20,8 @@ def load_env_file(path: Path) -> None:
         value = value.strip()
         if value.startswith(("'", '"')) and value.endswith(("'", '"')) and len(value) >= 2:
             value = value[1:-1]
-        os.environ.setdefault(key, value)
+        if not os.environ.get(key):
+            os.environ[key] = value
 
 
 def print_result(ok: bool, label: str, detail: str) -> bool:
@@ -111,6 +112,16 @@ def test_suit_root(root: Path) -> bool:
     return print_result(True, "Suit asset root", f"{len(files)} legacy fallback files available")
 
 
+def test_fal_optional() -> bool:
+    fal_key = (os.getenv("FAL_KEY") or "").strip()
+    fal_model = (os.getenv("FAL_TRYON_MODEL") or "fal-ai/fashn/tryon/v1.6").strip()
+    if not fal_key:
+        return print_result(True, "FAL setup", "not configured (jobs auto-fallback to segmind/local)")
+    if not fal_model:
+        return print_result(False, "FAL setup", "configured key present but model missing")
+    return print_result(True, "FAL setup", f"configured model={fal_model}")
+
+
 def main() -> int:
     repo_root = Path(__file__).resolve().parent.parent
     load_env_file(repo_root / ".env.tryon-worker")
@@ -137,6 +148,7 @@ def main() -> int:
     checks.append(print_result(local_api_ok, "TRYON_LOCAL_API_URL", local_api_url if local_api_ok else "missing"))
     checks.append(print_result(person_hosts_ok, "TRYON_ALLOWED_PERSON_SOURCE_HOSTS", person_hosts if person_hosts_ok else "missing"))
     checks.append(print_result(suit_hosts_ok, "TRYON_ALLOWED_SUIT_SOURCE_HOSTS", suit_hosts if suit_hosts_ok else "missing"))
+    checks.append(test_fal_optional())
 
     queue_root = Path((os.getenv("TRYON_QUEUE_ROOT") or "/Users/Shared/Projects/try-on/queue").strip()).expanduser()
     suit_root = Path((os.getenv("TRYON_SUIT_ASSET_ROOT") or "/Users/Shared/Projects/try-on/images").strip()).expanduser()
