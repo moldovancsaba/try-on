@@ -13,9 +13,9 @@ Current boundary:
 - upstream GDS is the governance and design-authority source
 - this repo is still a `Gradio + FastAPI` surface, not a Mantine application
 - relevant GDS principles are adopted locally through:
-  - [studio_tools/static/global.css](/Users/Shared/Projects/try-on/studio_tools/static/global.css:1)
-  - [studio_tools/templates/navbar.html](/Users/Shared/Projects/try-on/studio_tools/templates/navbar.html:1)
-  - [studio_tools/templates/landing.html](/Users/Shared/Projects/try-on/studio_tools/templates/landing.html:1)
+  - [studio_tools/static/global.css](studio_tools/static/global.css:1)
+  - [studio_tools/templates/navbar.html](studio_tools/templates/navbar.html:1)
+  - [studio_tools/templates/landing.html](studio_tools/templates/landing.html:1)
 
 That means “update to latest GDS” in this repository means syncing applicable design rules, navigation/shell patterns, accessibility states, and responsive behavior, not importing Mantine providers or package exports directly.
 
@@ -35,13 +35,13 @@ The current API surface is:
 - `POST /api/tryon/run`
 - `GET /api/capabilities`
 - `GET /api/quality-contracts`
-- `GET /api/worker/status`
+- the worker status endpoint
 - `GET /api/worker/settings`
-- `POST /api/worker/settings`
-- `POST /api/worker/service-action`
-- `POST /api/worker/jobs/{jobId}/retry`
-- `GET /api/tryon/setups`
-- `POST /api/tryon/setups/{setupId}/use`
+- the worker settings endpoint
+- the worker service-action endpoint
+- the worker job retry endpoint
+- the setup listing endpoint
+- the setup selection endpoint
 - `POST /upload_garment`
 - `POST /save_package`
 
@@ -69,7 +69,7 @@ Shared model root:
 
 App settings path:
 
-- `/Users/Shared/Projects/try-on/.config/settings.json`
+- `.config/settings.json`
 
 Legacy model-vault settings files are migrated forward automatically on startup.
 
@@ -135,28 +135,27 @@ Required environment variables:
 MONGODB_ATLAS_URI=...
 MONGODB_DB_NAME=...
 IMGBB_API_KEY=...
-CAMERA_TRYON_COMPLETE_URL=https://camera.example.com/api/internal/tryon/complete
+CAMERA_TRYON_COMPLETE_URL=...
 CAMERA_TRYON_INTERNAL_SECRET=...
 TRYON_SETUP_COLLECTION=tryon_setups
 TRYON_CAMERA_SETUP_PREFERENCE_COLLECTION=camera_setup_preferences
 TRYON_SETUP_CATALOG_PATH=.config/tryon_setups.json
-TRYON_DEFAULT_SETUP_ID=default_motogp
-TRYON_QUEUE_ROOT=/Users/Shared/Projects/try-on/queue
-TRYON_SUIT_ASSET_ROOT=/Users/Shared/Projects/try-on/images
-TRYON_LOCAL_API_URL=http://127.0.0.1:7860/api/tryon/run
-SEGMIND_API_URL=https://api.segmind.com/v1/idm-vton
-SEGMIND_API_KEY=...
+TRYON_DEFAULT_SETUP_ID=...
+TRYON_QUEUE_ROOT=...
+TRYON_SUIT_ASSET_ROOT=...
+TRYON_LOCAL_API_URL=...
+EXTERNAL_PROVIDER_API_URL=...
+EXTERNAL_PROVIDER_API_KEY=...
 TRYON_ALLOWED_PERSON_SOURCE_HOSTS=i.ibb.co
 TRYON_ALLOWED_SUIT_SOURCE_HOSTS=i.ibb.co
 TRYON_MAX_SOURCE_IMAGE_BYTES=26214400
 TRYON_MAX_SUIT_IMAGE_BYTES=26214400
 TRYON_ALLOW_REDIRECTS=false
-SEGMIND_API_TIMEOUT_SECONDS=120
-FAL_KEY=...
-FAL_BASE_URL=https://fal.run
-FAL_TRYON_MODEL=fal-ai/fashn/tryon/v1.6
-FAL_TRYON_TIMEOUT_SECONDS=300
-FAL_* variables are optional. If Fal is not configured, or Fal calls fail, jobs auto-fallback to segmind_idm_vton (when `SEGMIND_API_KEY` exists) and then to local motoGP try-on.
+EXTERNAL_PROVIDER_TIMEOUT_SECONDS=300
+OPTIONAL_PROVIDER_KEY=...
+OPTIONAL_PROVIDER_BASE_URL=...
+OPTIONAL_PROVIDER_MODEL=...
+OPTIONAL_PROVIDER_TIMEOUT_SECONDS=300
 TRYON_POLL_INTERVAL_SECONDS=60
 TRYON_LEASE_DURATION_SECONDS=600
 TRYON_MAX_ATTEMPTS=3
@@ -212,14 +211,14 @@ Setup metadata in Atlas + local catalog:
 
 ```json
 {
-  "setupId": "default_motogp",
-  "name": "MotoGP Default",
+  "setupId": "default_setup",
+  "name": "Default Local",
   "description": "Default high-detail leather route",
   "cameraId": null,
   "active": true,
   "isDefault": true,
   "rank": 0,
-  "revision": "motogp-high-v1",
+  "revision": "local-high-v1",
   "createdAt": "2026-06-03T12:00:00Z",
   "updatedAt": "2026-06-03T12:00:00Z"
 }
@@ -229,12 +228,12 @@ Setup metadata in Atlas + local catalog:
 
 ```json
 {
-  "setupId": "default_motogp",
-  "name": "MotoGP High (Default)",
+  "setupId": "default_setup",
+  "name": "Local High (Default)",
   "active": true,
-  "revision": "motogp-high-v1",
+  "revision": "local-high-v1",
   "config": {
-    "processing_profile": "motogp_leather_magic",
+    "processing_profile": "local_profile",
     "category": "Upper (T-Shirts, Hoodies)",
     "steps": 60,
     "guidance": 4.6
@@ -247,7 +246,7 @@ Setup metadata in Atlas + local catalog:
 ```json
 {
   "cameraId": "camera_123",
-  "setupId": "default_motogp",
+  "setupId": "default_setup",
   "updatedAt": "2026-06-03T12:00:00Z"
 }
 ```
@@ -284,7 +283,7 @@ API:
 - `GET /api/tryon/setups?cameraId=<cameraId>` returns active setups filtered for the camera and global defaults.
   - Metadata and names come from Atlas (`tryon_setups`).
   - Config values come from `.config/tryon_setups.json` on the try-on machine.
-- `POST /api/tryon/setups/{setupId}/use` accepts `{ "cameraId": "camera_123" }` and writes preference.
+- the setup selection endpoint accepts `{ "cameraId": "camera_123" }` and writes preference.
   - Selected setup is validated against local catalog and recorded both in preference and setup metadata collection.
 
 Camera completion callback is enriched with resolved setup metadata:
@@ -450,7 +449,7 @@ Example:
   "person_image_path": "/abs/path/person.png",
   "garment_image_path": "/abs/path/garment.png",
   "output_image_path": "/abs/path/result.png",
-  "processing_profile": "motogp_leather_magic",
+  "processing_profile": "local_profile",
   "category": "Upper (T-Shirts, Hoodies)",
   "steps": 24,
   "guidance": 3.5,
@@ -467,7 +466,7 @@ Response:
   "status": "succeeded",
   "output_image_path": "/abs/path/result.png",
   "message": "ok",
-  "processing_profile": "motogp_leather_magic",
+  "processing_profile": "local_profile",
   "quality_validation": {},
   "metadata_path": "/abs/path/result.png.json"
 }
@@ -475,55 +474,16 @@ Response:
 
 If `show_mask=true`, the API also writes and returns a sibling mask image path.
 
-When `processing_profile=motogp_leather_magic`, the server enforces the full-body MotoGP preset:
+Processing profiles are resolved from private worker configuration. Keep provider names, payload fields, model IDs, tuning parameters, and preset details out of committed documentation.
 
-- full-body category
-- minimum 30 steps
-- guidance >= 4.2
-- `DPM++ 2M`
-- preserved head enabled
-- high-fidelity VAE enabled
+External provider prerequisites:
 
-When `processing_profile=segmind_idm_vton`, the queue worker uses the external Segmind IDM-VTON API instead of the local CatVTON endpoint. For this profile, the worker sends:
+- provider endpoint configured privately when enabled
+- provider key configured privately when enabled
+- timeout tuned for expected latency
+- fallback behavior documented in private ops notes
 
-- `crop` (bool)
-- `category`
-- `seed`
-- `steps`
-- `force_dc`
-- `mask_only`
-- `garment_des`
 
-The worker uploads the downloaded person and garment inputs to ImgBB to provide public URLs for Segmind request fields:
-
-- `human_img`
-- `garm_img`
-
-Segmind profile prerequisites:
-
-- `SEGMIND_API_URL` set (defaults to `https://api.segmind.com/v1/idm-vton`)
-- `SEGMIND_API_KEY` set
-- `SEGMIND_API_TIMEOUT_SECONDS` tuned for expected latency
-
-When `processing_profile=fal_tryon`, the queue worker sends try-on requests to the Fal.ai fashn/tryon endpoint:
-
-- `person_image` and `garment_image` are uploaded to ImgBB and then sent to Fal queue API.
-- The payload uses:
-  - `mode: quality`
-  - `category` defaults to `dresses` for this preset
-  - `garment_photo_type: auto`
-  - `output_format: png`
-  - `seed: 42` for stable brand-safe output
-- Result retrieval uses Fal queued request tracking (`status_url` and `response_url`) with completion polling.
-
-Fal profile prerequisites:
-
-- `FAL_KEY` set to a valid Fal.ai API key.
-- `FAL_BASE_URL` optional (defaults to `https://fal.run`)
-- `FAL_TRYON_MODEL` optional, defaults to `fal-ai/fashn/tryon/v1.6`
-- `FAL_TRYON_TIMEOUT_SECONDS` optional for provider timeout tuning
-
-This profile is the same one used by the local catalog setup with setupId `fal_ai_tryon` in `.config/tryon_setups.json`.
 ## Operations Playbooks
 
 ### How to add models
@@ -584,24 +544,22 @@ If these tests are not runnable in your environment, run a manual smoke job via 
 
 Keep runtime keys and endpoints in `.env.tryon-worker` and rotate them when ownership changes.
 
-1. Maintain base queue/auth settings: `MONGODB_ATLAS_URI`, `MONGODB_DB_NAME`, `IMGBB_API_KEY`, `CAMERA_TRYON_COMPLETE_URL`, `CAMERA_TRYON_INTERNAL_SECRET`.
-2. Configure Segmind only when `segmind_idm_vton` is enabled:
-   `SEGMIND_API_URL`, `SEGMIND_API_KEY`, `SEGMIND_API_TIMEOUT_SECONDS`.
-3. Configure Fal only when `fal_tryon` is enabled:
-   `FAL_KEY`, `FAL_BASE_URL`, `FAL_TRYON_MODEL`, `FAL_TRYON_TIMEOUT_SECONDS`.
+1. Maintain base queue/auth settings in the worker environment file.
+2. Configure external providers only when their private setup profile is enabled.
+3. Keep provider endpoints, model IDs, and API keys out of committed docs.
 4. Verify source download and callbacks with:
 
 ```bash
 ./.venv311/bin/python scripts/verify_tryon_worker_setup.py
 ```
 
-5. Confirm provider status and fallback behavior from `GET /api/worker/status`.
+5. Confirm provider status and fallback behavior from the worker status endpoint.
 
 Provider fallback behavior (safe defaults):
 
-- If Fal is enabled and healthy, Fal setups use Fal queue API.
-- If Fal is missing or fails repeatedly, worker falls back to Segmind when possible.
-- If Segmind is not available, worker falls back to local motoGP pipeline.
+- If an external provider is enabled and healthy, its configured setup may use it.
+- If the preferred provider is missing or fails repeatedly, worker falls back according to private setup policy.
+- If no external provider is available, worker falls back to the configured local pipeline.
 
 When rotating secrets:
 
@@ -611,9 +569,9 @@ When rotating secrets:
 
 Common API-related failure checks:
 
-- worker logs: `fal_auth_failed`, `segmind_api_failed`, `imgbb_upload_failed`
+- worker logs for provider auth, provider API, and media upload failures
 - app logs: provider profile fallback or startup warning events
-- `GET /api/worker/status` should still return `workerRunning`.
+- the worker status endpoint should still return a running state.
 
 Network and host hardening:
 
@@ -655,7 +613,7 @@ Preset shape reference:
   "rank": 30,
   "revision": "example-v2",
   "config": {
-    "processing_profile": "motogp_leather_magic",
+    "processing_profile": "local_profile",
     "steps": 72,
     "guidance": 4.8,
     "mask_sharpness": 18,
@@ -665,14 +623,11 @@ Preset shape reference:
 }
 ```
 
-Local vs online tuning guidance:
+Tuning guidance:
 
-- Local profile changes affect the CatVTON/Pipeline path and should be validated with transparent PNG edge cases.
-- Online profile changes mainly affect API prompt fidelity and should be validated with diverse logo/text garments.
-- For transparent garment safety, prioritize:
-  - higher mask sharpness where needed,
-  - tighter alpha-constrained padding,
-  - explicit no-fill/no-bleed instructions in `garment_des` for online profiles.
+- Local profile changes should be validated with representative source and garment edge cases.
+- External profile changes should be validated with diverse logo/text garments.
+- Keep detailed prompt and provider tuning notes in private ops documentation.
 
 Rollback approach:
 
@@ -727,7 +682,7 @@ Collection-level contract summary:
 
 Suggested Atlas update procedure:
 
-1. Edit [`.config/tryon_setups.json`](/Users/Shared/Projects/try-on/.config/tryon_setups.json:1).
+1. Edit [`.config/tryon_setups.json`](.config/tryon_setups.json:1).
 2. Bump all touched revisions.
 3. Restart both app + worker.
 4. Confirm sync from app/worker logs (setup upsert events).
@@ -745,11 +700,11 @@ curl "http://127.0.0.1:7860/api/tryon/setups?cameraId=<cameraId>"
 
 Disaster recovery:
 
-1. Keep legacy fallback metadata intact (`default_motogp`) so worker can continue processing.
+1. Keep legacy fallback metadata intact so worker can continue processing.
 2. If a bad sync propagates, temporarily pin to local fallback setup in camera or worker route while correcting catalog JSON.
 3. Re-deploy corrected JSON and rerun verification steps.
 
-### `GET /api/worker/status`
+### the worker status endpoint
 
 Returns the current worker runtime snapshot, saved worker settings, recent structured worker events, and queue counts when Atlas credentials are available.
 
@@ -766,7 +721,7 @@ Sample fields:
 
 Returns persisted worker settings from `.config/worker_settings.json`.
 
-### `POST /api/worker/settings`
+### the worker settings endpoint
 
 Updates persisted worker settings.
 
@@ -780,7 +735,7 @@ Example:
 }
 ```
 
-### `POST /api/worker/jobs/{jobId}/retry`
+### the worker job retry endpoint
 
 Moves a retryable job back into processing flow.
 
@@ -828,16 +783,16 @@ Writes a sanitized package folder under `studio_tools/packages`.
 
 High-value application files:
 
-- [app.py](/Users/Shared/Projects/try-on/app.py:1) main runtime, routes, UI, and API
-- [install.sh](/Users/Shared/Projects/try-on/install.sh:1) environment and core-model installer
-- [run.sh](/Users/Shared/Projects/try-on/run.sh:1) local launcher
-- [model_paths.py](/Users/Shared/Projects/try-on/model_paths.py:1) shared path and settings helpers
-- [scripts/audit_models.py](/Users/Shared/Projects/try-on/scripts/audit_models.py:1) shared-vault audit and manifest generator
-- [scripts/sync_models.py](/Users/Shared/Projects/try-on/scripts/sync_models.py:1) deterministic core model sync
-- [services/capabilities.py](/Users/Shared/Projects/try-on/services/capabilities.py:1) feature capability contract and status report
-- [services/quality_contracts.py](/Users/Shared/Projects/try-on/services/quality_contracts.py:1) output quality gates and response metadata contract
-- [warp_repair.py](/Users/Shared/Projects/try-on/warp_repair.py:1) texture/logo restoration pass
-- [studio_tools/generate_master_map.py](/Users/Shared/Projects/try-on/studio_tools/generate_master_map.py:1) DensePose master-map generation
+- [app.py](app.py:1) main runtime, routes, UI, and API
+- [install.sh](install.sh:1) environment and core-model installer
+- [run.sh](run.sh:1) local launcher
+- [model_paths.py](model_paths.py:1) shared path and settings helpers
+- [scripts/audit_models.py](scripts/audit_models.py:1) shared-vault audit and manifest generator
+- [scripts/sync_models.py](scripts/sync_models.py:1) deterministic core model sync
+- [services/capabilities.py](services/capabilities.py:1) feature capability contract and status report
+- [services/quality_contracts.py](services/quality_contracts.py:1) output quality gates and response metadata contract
+- [warp_repair.py](warp_repair.py:1) texture/logo restoration pass
+- [studio_tools/generate_master_map.py](studio_tools/generate_master_map.py:1) DensePose master-map generation
 
 ## Known Limits
 
