@@ -797,6 +797,41 @@ class TryOnQueueWorker:
             )
         return int(result.modified_count)
 
+    def recover_interrupted_timeout_jobs(self) -> int:
+        now = now_iso()
+        result = self.jobs.update_many(
+            {
+                "status": {"$in": ["processing", "uploading_result", "notifying_camera"]},
+                "processing.workerId": self.config.worker_id,
+                "processing.attemptCount": {"$gte": 2},
+                "error.message": {"$regex": r"timeout|timed out|read timeout", "$options": "i"},
+            },
+            {
+                "$set": {
+                    "status": "failed",
+                    "stage": "failed",
+                    "updatedAt": now,
+                    "processing.finishedAt": now,
+                    "processing.leaseExpiresAt": None,
+                    "error": {
+                        "code": "timeout_retry_limit_reached",
+                        "message": "Timeout failed twice; job left failed behind the queue.",
+                        "details": "Recovered interrupted second-timeout job.",
+                    },
+                },
+                "$unset": {"processing.nextAttemptAt": ""},
+            },
+        )
+        if result.modified_count:
+            self.emit_event(
+                level="warn",
+                event="recovered_interrupted_timeout_jobs",
+                status="failed",
+                stage="failed",
+                details={"count": int(result.modified_count)},
+            )
+        return int(result.modified_count)
+
     def recover_operator_aborted_jobs(self) -> int:
         selector = {
             "status": "failed",
@@ -2171,6 +2206,7 @@ class TryOnQueueWorker:
             self.update_runtime_status(currentJobId=None, workerRunning=True, note="worker_disabled")
             print("[tryon-worker] worker disabled by settings")
             return False
+        self.recover_interrupted_timeout_jobs()
         self.recover_stale_jobs()
         self.recover_stale_heartbeat_jobs()
         self.recover_operator_aborted_jobs()
