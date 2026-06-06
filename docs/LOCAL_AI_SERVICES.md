@@ -380,6 +380,20 @@ gh project item-list 41 --owner moldovancsaba --format json --limit 100
 
 If the issues are missing from the project board after quota reset, add each issue to project `41` and set status to `Done` using GitHub Projects v2 tooling or the `gh project` commands available in the local CLI version.
 
+Latest delivery continuation note:
+
+- A follow-up board attempt still showed GraphQL quota exhausted.
+- `gh project item-list 41 --owner moldovancsaba --format json --limit 10` returned `unknown owner type` in that quota-exhausted state.
+- Before mutating cards later, first re-confirm the project metadata and supported CLI syntax with:
+
+```bash
+gh project list --owner moldovancsaba --format json
+gh project view 41 --owner moldovancsaba --format json
+gh project field-list 41 --owner moldovancsaba --format json
+```
+
+If the local `gh project` command still reports `unknown owner type` after quota reset, use the GitHub web UI for the final board mutation or use GraphQL directly through `gh api graphql` with the project id from `gh project view`.
+
 Suggested follow-up command sequence after quota reset:
 
 ```bash
