@@ -35,6 +35,17 @@ The current API surface is:
 - `POST /api/tryon/run`
 - `GET /api/capabilities`
 - `GET /api/quality-contracts`
+- `GET /api/local-ai/services`
+- `GET /api/local-ai/model-packs`
+- `POST /api/local-ai/jobs`
+- `POST /api/local-ai/garments/isolate`
+- `POST /api/local-ai/product-photo/cleanup`
+- `POST /api/local-ai/quality/brand-safety`
+- `POST /api/local-ai/quality/tryon-gate`
+- `POST /api/local-ai/editing/inpaint`
+- `POST /api/local-ai/variants/generate`
+- `POST /api/local-ai/events/{eventId}/social-stills`
+- `GET /api/local-ai/reports`
 - the worker status endpoint
 - `GET /api/worker/settings`
 - the worker settings endpoint
@@ -49,6 +60,14 @@ The local queue worker surface is:
 
 - `./.venv311/bin/tryon-queue-worker scripts/tryon_queue_worker.py`
 - `./.venv311/bin/tryon-queue-worker scripts/tryon_queue_worker.py --once`
+
+The local AI services CLI surface is:
+
+- `./.venv311/bin/python scripts/local_ai_services.py list`
+- `./.venv311/bin/python scripts/local_ai_services.py model-packs`
+- `./.venv311/bin/python scripts/local_ai_services.py run <service_id> --payload payload.json`
+- `./.venv311/bin/python scripts/local_ai_services.py fixtures`
+- `./.venv311/bin/python scripts/local_ai_services.py report`
 
 ## Runtime Summary
 
@@ -879,3 +898,27 @@ CAMERA_CALLBACK_DAILY_LIMIT=5000
 ```
 
 Maintenance rule: if queue status, provider metrics, failure taxonomy, reconciliation findings, or worker heartbeat fields change, update `docs/TRYON_ATLAS_CONTRACT.md` and `docs/TRYON_CRITICAL_INFRASTRUCTURE.md` in the same commit.
+
+## Local AI Services
+
+The app now includes a zero-external-cost local image service family.
+
+Docs:
+
+- `docs/LOCAL_AI_SERVICES.md`
+- `docs/LOCAL_AI_SERVICES_USER_GUIDE.md`
+- `docs/RELEASE_NOTES.md`
+
+Services:
+
+- `garment_isolation`
+- `product_photo_cleanup`
+- `brand_safety_analyzer`
+- `tryon_quality_gate`
+- `local_inpainting_cleanup`
+- `campaign_variant_generator`
+- `event_social_still_builder`
+- `synthetic_fixture_generator`
+- `local_ai_service_reporting`
+
+All first-version service execution is local. Do not add paid external inference/API dependencies to this lane without updating the architecture docs, README, release notes, privacy/security notes, and GitHub issue acceptance criteria.

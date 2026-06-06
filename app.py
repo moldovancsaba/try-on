@@ -37,6 +37,12 @@ from services.single_task_lock import SingleTaskLock
 from services.worker_contracts import PROCESSING_PROFILE_GENERIC, PROCESSING_PROFILE_MOTOGP, normalize_processing_profile
 from services.tryon_setups import SETUP_PROVIDER_LOCAL, SETUP_PROVIDER_ONLINE, load_local_setups
 from services.garment_packages import PACKAGE_SCHEMA_VERSION, load_garment_package
+from services.local_ai_services import (
+    evaluate_model_packs,
+    export_report_csv,
+    run_local_ai_service,
+    service_registry,
+)
 from services.worker_runtime import append_worker_event, load_worker_status, read_recent_worker_events
 from services.worker_settings import load_worker_settings, normalize_worker_settings, save_worker_settings
 
@@ -1515,6 +1521,11 @@ class TryOnSetupSelectionRequest(BaseModel):
     cameraId: str
 
 
+class LocalAiJobRequest(BaseModel):
+    serviceId: str
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
 def _apply_processing_profile(payload: TryOnApiRequest) -> TryOnApiRequest:
     profile = normalize_processing_profile(payload.processing_profile)
     payload.processing_profile = profile
@@ -1935,6 +1946,63 @@ if "fastapi_app" in globals():
     @fastapi_app.get("/api/quality-contracts")
     async def quality_contracts_api():
         return JSONResponse(get_quality_contracts())
+
+    @fastapi_app.get("/api/local-ai/services")
+    async def local_ai_services_api():
+        return JSONResponse(service_registry(_MODELS_ROOT))
+
+    @fastapi_app.get("/api/local-ai/model-packs")
+    async def local_ai_model_packs_api():
+        return JSONResponse(evaluate_model_packs(_MODELS_ROOT))
+
+    @fastapi_app.post("/api/local-ai/jobs")
+    async def local_ai_job_api(payload: LocalAiJobRequest):
+        try:
+            result = run_local_ai_service(_ROOT, payload.serviceId, payload.payload)
+        except FileNotFoundError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        except Exception as error:
+            raise HTTPException(status_code=500, detail=str(error)) from error
+        return JSONResponse(result)
+
+    @fastapi_app.post("/api/local-ai/garments/isolate")
+    async def local_ai_garment_isolate_api(payload: dict[str, Any]):
+        return JSONResponse(run_local_ai_service(_ROOT, "garment_isolation", payload))
+
+    @fastapi_app.post("/api/local-ai/product-photo/cleanup")
+    async def local_ai_product_cleanup_api(payload: dict[str, Any]):
+        return JSONResponse(run_local_ai_service(_ROOT, "product_photo_cleanup", payload))
+
+    @fastapi_app.post("/api/local-ai/quality/brand-safety")
+    async def local_ai_brand_safety_api(payload: dict[str, Any]):
+        return JSONResponse(run_local_ai_service(_ROOT, "brand_safety_analyzer", payload))
+
+    @fastapi_app.post("/api/local-ai/quality/tryon-gate")
+    async def local_ai_tryon_gate_api(payload: dict[str, Any]):
+        return JSONResponse(run_local_ai_service(_ROOT, "tryon_quality_gate", payload))
+
+    @fastapi_app.post("/api/local-ai/editing/inpaint")
+    async def local_ai_inpaint_api(payload: dict[str, Any]):
+        return JSONResponse(run_local_ai_service(_ROOT, "local_inpainting_cleanup", payload))
+
+    @fastapi_app.post("/api/local-ai/variants/generate")
+    async def local_ai_variants_api(payload: dict[str, Any]):
+        return JSONResponse(run_local_ai_service(_ROOT, "campaign_variant_generator", payload))
+
+    @fastapi_app.post("/api/local-ai/events/{event_id}/social-stills")
+    async def local_ai_event_stills_api(event_id: str, payload: dict[str, Any]):
+        return JSONResponse(run_local_ai_service(_ROOT, "event_social_still_builder", {**payload, "eventId": event_id}))
+
+    @fastapi_app.get("/api/local-ai/reports")
+    async def local_ai_reports_api():
+        return JSONResponse(run_local_ai_service(_ROOT, "local_ai_service_reporting", {}))
+
+    @fastapi_app.get("/api/local-ai/reports/export")
+    async def local_ai_reports_export_api():
+        output_path = export_report_csv(_ROOT, _ROOT / ".runtime" / "local_ai" / "reports" / "local_ai_services.csv")
+        return JSONResponse({"path": str(output_path)})
 
     @fastapi_app.get("/api/worker/status")
     async def worker_status_api():
