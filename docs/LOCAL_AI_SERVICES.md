@@ -259,6 +259,7 @@ The tests cover:
 Implementation status:
 
 - Code, APIs, CLI, documentation, user guide, release notes, README updates, and focused validation shipped in commit `edd0bc2`.
+- Project-board handover documentation shipped in commit `18af984`.
 - GitHub issues `#25` through `#36` were commented with delivery notes and closed as completed.
 - Labels and milestones were created directly in the repository.
 - Native GitHub Projects v2 card/status mutation is still pending because the account's GraphQL quota was exhausted during delivery.
@@ -291,6 +292,77 @@ Pending board action after GraphQL quota reset:
 12. #36 Analytics: Local AI service reporting - zero-cost value and operational metrics
 ```
 
+Milestones to confirm on the issues:
+
+```text
+#25-#26 -> Local AI Services 0 - Foundation Contracts
+#27-#31 -> Local AI Services 1 - Product Studio Pipelines
+#32-#36 -> Local AI Services 2 - Operator Experience and Validation
+```
+
+Labels to confirm:
+
+```text
+local-ai-service
+zero-external-cost
+ops
+observability
+```
+
+Additional labels by issue:
+
+```text
+#25 -> api-contract, model-governance
+#26 -> model-governance
+#27 -> product-studio
+#28 -> product-studio
+#29 -> quality-gate
+#30 -> quality-gate
+#31 -> product-studio
+#32 -> product-studio
+#33 -> product-studio
+#34 -> quality-gate, model-governance
+#35 -> gds-required, accessibility, operator-ui
+#36 -> observability
+```
+
+Desired GitHub Projects v2 status:
+
+```text
+#25-#36 -> Done
+```
+
+Project board readme section to add or confirm:
+
+```md
+## Current Next Pack: Local AI Services - Zero External Cost v1
+
+Canonical standard: every issue in this pack follows sovereignsquad/general-design-system#81.
+
+Scope: build high-value local AI image services on the existing try-on/local worker stack without paid external inference or API costs in the first delivery.
+
+Delivery sequence:
+1. #25 Platform service registry and capability contract
+2. #26 Local model pack governance
+3. #27 Garment isolation pipeline
+4. #28 Product photo cleanup pipeline
+5. #29 Brand safety analyzer
+6. #30 Try-on quality gate
+7. #31 Local inpainting cleanup
+8. #32 Campaign variant generator
+9. #33 Event social still builder
+10. #34 Synthetic regression fixture generator
+11. #35 GDS local AI services console
+12. #36 Local AI service reporting
+
+Pack rules:
+- zero paid external inference/API cost is mandatory for first delivery
+- all UI/UX/frontend work must use only the Sovereign Squad General Design System
+- accessibility is mandatory
+- every issue must include architecture, contracts, APIs/CLI where relevant, runtime behavior, observability, retries/timeouts, rollback, tests, documentation, dependencies, and execution order
+- no issue may ship as a vague umbrella task
+```
+
 GraphQL quota state observed during delivery:
 
 ```json
@@ -307,3 +379,23 @@ gh project item-list 41 --owner moldovancsaba --format json --limit 100
 ```
 
 If the issues are missing from the project board after quota reset, add each issue to project `41` and set status to `Done` using GitHub Projects v2 tooling or the `gh project` commands available in the local CLI version.
+
+Suggested follow-up command sequence after quota reset:
+
+```bash
+gh project item-list 41 --owner moldovancsaba --format json --limit 200
+gh project item-add 41 --owner moldovancsaba --url https://github.com/moldovancsaba/try-on/issues/25
+gh project item-add 41 --owner moldovancsaba --url https://github.com/moldovancsaba/try-on/issues/26
+gh project item-add 41 --owner moldovancsaba --url https://github.com/moldovancsaba/try-on/issues/27
+gh project item-add 41 --owner moldovancsaba --url https://github.com/moldovancsaba/try-on/issues/28
+gh project item-add 41 --owner moldovancsaba --url https://github.com/moldovancsaba/try-on/issues/29
+gh project item-add 41 --owner moldovancsaba --url https://github.com/moldovancsaba/try-on/issues/30
+gh project item-add 41 --owner moldovancsaba --url https://github.com/moldovancsaba/try-on/issues/31
+gh project item-add 41 --owner moldovancsaba --url https://github.com/moldovancsaba/try-on/issues/32
+gh project item-add 41 --owner moldovancsaba --url https://github.com/moldovancsaba/try-on/issues/33
+gh project item-add 41 --owner moldovancsaba --url https://github.com/moldovancsaba/try-on/issues/34
+gh project item-add 41 --owner moldovancsaba --url https://github.com/moldovancsaba/try-on/issues/35
+gh project item-add 41 --owner moldovancsaba --url https://github.com/moldovancsaba/try-on/issues/36
+```
+
+After adding or confirming the items, use the project field IDs from `gh project field-list 41 --owner moldovancsaba --format json` and set each item status to `Done`. The exact `gh project item-edit` command depends on the local `gh` CLI field metadata returned after quota reset.
