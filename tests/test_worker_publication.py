@@ -25,7 +25,7 @@ class WorkerPublicationTests(unittest.TestCase):
     def make_worker(self, job: dict) -> TryOnQueueWorker:
         worker = TryOnQueueWorker.__new__(TryOnQueueWorker)
         worker.jobs = FakeJobs(job)
-        worker.config = SimpleNamespace(imgbb_api_key="test")
+        worker.config = SimpleNamespace(imgbb_api_key="test", worker_id="worker_test")
         worker.emit_event = Mock()
         return worker
 
@@ -63,6 +63,22 @@ class WorkerPublicationTests(unittest.TestCase):
         self.assertEqual(update["result"]["deleteUrl"], "https://cdn.example/delete")
         self.assertEqual(update["result"]["imgbbDeleteUrl"], "https://cdn.example/delete")
         self.assertEqual(update["processing.publicationState"], "uploaded")
+
+    def test_camera_completion_is_skipped_when_already_notified(self) -> None:
+        worker = self.make_worker(
+            {
+                "jobId": "job_3",
+                "source": {"submissionId": "sub_3"},
+                "processing": {"cameraNotifiedAt": "2026-06-06T00:00:00Z"},
+            }
+        )
+        worker.notify_camera_completion = Mock(side_effect=AssertionError("callback should not run"))
+
+        notified = worker.ensure_camera_notified("job_3", {"imageUrl": "https://cdn.example/result.png"})
+
+        self.assertFalse(notified)
+        worker.notify_camera_completion.assert_not_called()
+        worker.emit_event.assert_called()
 
 
 if __name__ == "__main__":
