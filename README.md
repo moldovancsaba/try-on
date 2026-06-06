@@ -305,6 +305,8 @@ Canonical Atlas queue and suit contracts are documented in `docs/TRYON_ATLAS_CON
 
 Queue rows are validated before processing. Legacy rows without `schemaVersion` are normalized to the current in-memory shape, but missing required fields still fail with stable validation errors.
 
+Result publication is restart-safe: once a public result URL exists on the job, retries reuse it and continue with the Camera completion callback instead of uploading another copy.
+
 ## Model Vault Contract
 
 This app is designed to reuse a centralized shared model store instead of keeping project-local checkpoints.

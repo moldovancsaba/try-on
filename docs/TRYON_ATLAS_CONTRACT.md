@@ -52,10 +52,17 @@ Optional result fields:
 
 - `result.publicResultUrl`
 - `result.deleteUrl`
+- `result.imgbbDeleteUrl` legacy alias for `result.deleteUrl`
 - `result.provider`
 - `result.uploadedAt`
 - `processing.cameraNotifiedAt`
 - `processing.publicationState`
+
+Publication states:
+
+- `not_started`: result publication has not completed any durable side effect.
+- `uploaded`: media upload succeeded and the public URL is stored; retry must not upload again.
+- `camera_notified`: Camera completion callback succeeded or was already accepted idempotently.
 
 ## leather_suits V1
 
@@ -167,3 +174,12 @@ Stable worker validation errors include:
 ## Maintenance rule
 
 Any Camera or worker change that adds queue fields, status values, stage values, result publication fields, or suit asset fields must update this contract first.
+
+## Idempotent publication rule
+
+Publication must be safe across worker retries and restarts:
+
+- If `result.publicResultUrl` exists and `processing.cameraNotifiedAt` is missing, the worker must skip media upload and retry only the Camera callback.
+- If `processing.cameraNotifiedAt` exists, the worker must mark the job `done` without repeating upload or callback.
+- Camera completion must be idempotent by `jobId`; duplicate callbacks for an already-materialized result should return success.
+- Publication errors are stored under `processing.publicationError` and redacted in worker events.

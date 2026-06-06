@@ -45,6 +45,7 @@ PIPELINE_VERSION = "1.1.0"
 FAL_SETUP_ID = "fal_ai_tryon"
 PUBLICATION_STATE_UPLOADED = "uploaded"
 PUBLICATION_STATE_CAMERA_NOTIFIED = "camera_notified"
+PUBLICATION_STATE_NOT_STARTED = "not_started"
 TRYON_SETUP_COLLECTION = "tryon_setups"
 TRYON_SETUP_PREFERENCES_COLLECTION = "camera_setup_preferences"
 TRYON_DEFAULT_SETUP_ID = "default_motogp"
@@ -985,6 +986,7 @@ class TryOnQueueWorker:
                     "updatedAt": now,
                     "result": {
                         "publicResultUrl": upload["imageUrl"],
+                        "deleteUrl": upload.get("deleteUrl"),
                         "imgbbDeleteUrl": upload.get("deleteUrl"),
                         "provider": "imgbb",
                         "uploadedAt": now,
@@ -1022,9 +1024,18 @@ class TryOnQueueWorker:
                 details={"publicResultUrl": redact_url(public_result_url), "provider": str(result_state.get("provider") or "imgbb")},
             )
             self._clear_publication_error(job_id)
-            return {"imageUrl": public_result_url, "deleteUrl": result_state.get("imgbbDeleteUrl")}
+            return {"imageUrl": public_result_url, "deleteUrl": result_state.get("deleteUrl") or result_state.get("imgbbDeleteUrl")}
 
         self.update_stage(job_id, "uploading_result", "uploading_result")
+        self.jobs.update_one(
+            {"jobId": job_id},
+            {
+                "$set": {
+                    "processing.publicationState": PUBLICATION_STATE_NOT_STARTED,
+                    "updatedAt": now_iso(),
+                }
+            },
+        )
         upload = self.upload_to_imgbb(result_path)
         now = now_iso()
         self._upsert_publication_result(job_id, upload, now)
