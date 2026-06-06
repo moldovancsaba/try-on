@@ -103,6 +103,35 @@ class WorkerPublicationTests(unittest.TestCase):
         self.assertIn("processing.cameraNotifiedAt", update)
         self.assertEqual(update["processing.publicationState"], "camera_notified")
 
+    def test_second_timeout_is_final_failed_not_retry_wait(self) -> None:
+        worker = self.make_worker({"jobId": "job_timeout", "processing": {"attemptCount": 2}})
+        worker.config.max_attempts = 3
+
+        outcome = worker.schedule_retry_or_failure(
+            worker.jobs.job,
+            "transient_runtime_error",
+            "HTTPSConnectionPool read timed out. (read timeout=300)",
+        )
+
+        self.assertEqual(outcome, "failed")
+        update = worker.jobs.updates[-1]["$set"]
+        self.assertEqual(update["status"], "failed")
+        self.assertEqual(update["error"]["code"], "timeout_retry_limit_reached")
+
+    def test_first_timeout_can_retry(self) -> None:
+        worker = self.make_worker({"jobId": "job_timeout_retry", "processing": {"attemptCount": 1}})
+        worker.config.max_attempts = 3
+
+        outcome = worker.schedule_retry_or_failure(
+            worker.jobs.job,
+            "transient_runtime_error",
+            "HTTPSConnectionPool read timed out. (read timeout=300)",
+        )
+
+        self.assertEqual(outcome, "retry_wait")
+        update = worker.jobs.updates[-1]["$set"]
+        self.assertEqual(update["status"], "retry_wait")
+
 
 if __name__ == "__main__":
     unittest.main()

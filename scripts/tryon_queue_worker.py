@@ -404,6 +404,11 @@ def classify_failure(message: str) -> tuple[bool, str]:
     return False, "processing_failed"
 
 
+def is_timeout_failure(message: str) -> bool:
+    lower = message.lower()
+    return "timeout" in lower or "timed out" in lower or "read timeout" in lower
+
+
 def retry_delay_minutes(attempt_count: int) -> int | None:
     if attempt_count <= 1:
         return 5
@@ -916,10 +921,15 @@ class TryOnQueueWorker:
                 },
             )
             return "failed"
-        delay_minutes = retry_delay_minutes(attempt_count) if attempt_count < self.config.max_attempts else None
+        timeout_limit_reached = is_timeout_failure(message) and attempt_count >= 2
+        delay_minutes = None if timeout_limit_reached else retry_delay_minutes(attempt_count) if attempt_count < self.config.max_attempts else None
         now = now_iso()
         payload = {
-            "error": {"code": code, "message": message, "details": details},
+            "error": {
+                "code": "timeout_retry_limit_reached" if timeout_limit_reached else code,
+                "message": message,
+                "details": details or ("Timeout failed twice; job left failed behind the queue." if timeout_limit_reached else None),
+            },
             "updatedAt": now,
             "processing.leaseExpiresAt": None,
         }
