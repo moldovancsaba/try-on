@@ -499,3 +499,64 @@ gh project item-add 41 --owner moldovancsaba --url https://github.com/moldovancs
 ```
 
 After adding or confirming the items, use the project field IDs from `gh project field-list 41 --owner moldovancsaba --format json` and set each item status to `Done`. The exact `gh project item-edit` command depends on the local `gh` CLI field metadata returned after quota reset.
+
+### 2026-06-07 follow-up verification
+
+Repository issue state was verified with `gh issue view`:
+
+- `#25` through `#36` exist in `moldovancsaba/try-on`.
+- All `#25` through `#36` are closed.
+- Required labels and milestones match the handover contract.
+
+Project metadata was partially verified before GraphQL quota was exhausted again:
+
+```text
+Project: {try-on} - From IDEA to LIVE
+Project number: 41
+Project id: PVT_kwHOACGtF84BXhZM
+Status field id: PVTSSF_lAHOACGtF84BXhZMzhStsPg
+Done option id: 98236657
+```
+
+The current project board readme is already occupied by a newer pack:
+
+```text
+Current Next Pack: Try-On Runtime QA, Isolation, and Analytics v2
+```
+
+Decision still required before mutating the project readme:
+
+- keep the newer Runtime QA pack as the current board focus, and only verify/add/move `#25-#36` to `Done`
+- or replace/append the Local AI Services pack section from this handover
+
+The follow-up attempt consumed nearly all GraphQL quota while reading Project v2 data:
+
+```json
+{"limit":5000,"remaining":9,"reset":1780844128,"used":4991}
+```
+
+The reset timestamp corresponds to `2026-06-07 16:55:28 CEST`.
+
+Resume after quota reset with the smallest possible calls:
+
+```bash
+gh api rate_limit --jq '.resources.graphql'
+gh project item-list 41 --owner moldovancsaba --format json --limit 200 \
+  --jq '.items[] | select(.content.repository == "moldovancsaba/try-on" and (.content.number >= 25 and .content.number <= 36)) | {number:.content.number,status:.status,id:.id,url:.content.url}'
+```
+
+If any issue from `#25-#36` is missing, add it:
+
+```bash
+gh project item-add 41 --owner moldovancsaba --url https://github.com/moldovancsaba/try-on/issues/25
+```
+
+If any present item is not `Done`, set its status using:
+
+```bash
+gh project item-edit \
+  --project-id PVT_kwHOACGtF84BXhZM \
+  --id PROJECT_ITEM_ID \
+  --field-id PVTSSF_lAHOACGtF84BXhZMzhStsPg \
+  --single-select-option-id 98236657
+```
