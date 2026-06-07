@@ -560,3 +560,34 @@ gh project item-edit \
   --field-id PVTSSF_lAHOACGtF84BXhZMzhStsPg \
   --single-select-option-id 98236657
 ```
+
+### 2026-06-07 final project board update
+
+GitHub Project v2 mutation completed after quota recovered:
+
+- `#25` through `#36` were added to project `41`.
+- `#25` through `#36` were verified on project `41`.
+- `#25` through `#36` were set to Status `Done`.
+- Project readme was preserved with the newer active `Current Next Pack: Try-On Runtime QA, Isolation, and Analytics v2`.
+- A new completed-pack section was appended: `Completed Pack: Local AI Services - Zero External Cost v1`.
+
+Verified project item status:
+
+```text
+#25 -> Done
+#26 -> Done
+#27 -> Done
+#28 -> Done
+#29 -> Done
+#30 -> Done
+#31 -> Done
+#32 -> Done
+#33 -> Done
+#34 -> Done
+#35 -> Done
+#36 -> Done
+```
+
+Operational note:
+
+- For Project v2 `Status` updates through `gh api graphql`, pass `singleSelectOptionId` with raw `-f done=98236657`; using typed `-F done=98236657` can make `gh` infer the wrong GraphQL variable type.
