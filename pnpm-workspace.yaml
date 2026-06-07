@@ -1,0 +1,4 @@
+minimumReleaseAgeExclude:
+  - '@doneisbetter/gds-admin@3.4.3'
+  - '@doneisbetter/gds-core@3.4.3'
+  - '@doneisbetter/gds-theme@3.4.3'

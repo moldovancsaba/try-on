@@ -20,22 +20,40 @@
    ============================================================ */
 
 :root {
+    /* GDS 3.4 static bridge.
+       The local try-on app is FastAPI/Gradio, so it cannot consume React GDS
+       components directly. These variables mirror the GDS vibe-token contract
+       and keep local operator pages aligned with the installed GDS baseline. */
+    --gds-vibe-primary: #7e9cd8;
+    --gds-vibe-accent: #b4befe;
+    --gds-vibe-glow: rgba(126, 156, 216, 0.22);
+    --gds-vibe-canvas: #0b0b0f;
+    --gds-vibe-shell: #16161e;
+    --gds-vibe-surface: #16161e;
+    --gds-vibe-border: #2a2a37;
+    --gds-vibe-text: #dcd7ba;
+    --gds-vibe-muted: #727169;
+    --gds-vibe-gradient:
+        radial-gradient(circle at 18% 12%, rgba(126, 156, 216, 0.16), transparent 28%),
+        radial-gradient(circle at 82% 8%, rgba(180, 190, 254, 0.12), transparent 30%);
+    --gds-vibe-hero: linear-gradient(135deg, rgba(126, 156, 216, 0.14), rgba(180, 190, 254, 0.1));
+
     /* Background */
-    --color-bg:        #0b0b0f;
-    --color-panel:     #16161e;
+    --color-bg:        var(--gds-vibe-canvas);
+    --color-panel:     var(--gds-vibe-surface);
     --color-input:     #1f1f28;
 
     /* Borders */
-    --color-border:    #2a2a37;
+    --color-border:    var(--gds-vibe-border);
     --color-border-hi: #3a3a4a;
 
     /* Text */
-    --color-text:      #dcd7ba;
-    --color-text-dim:  #727169;
+    --color-text:      var(--gds-vibe-text);
+    --color-text-dim:  var(--gds-vibe-muted);
 
     /* Accent */
-    --color-accent:    #7e9cd8;
-    --color-accent-hi: #b4befe;
+    --color-accent:    var(--gds-vibe-primary);
+    --color-accent-hi: var(--gds-vibe-accent);
 
     /* Status */
     --color-success:   #98bb6c;
@@ -82,7 +100,10 @@
 html, body {
     font-family: var(--font-family);
     font-size: var(--font-size-md);
-    background: var(--color-bg);
+    background:
+        var(--gds-vibe-gradient),
+        linear-gradient(135deg, var(--color-bg), color-mix(in srgb, var(--color-accent) 8%, var(--color-bg)));
+    background-attachment: fixed;
     color: var(--color-text);
     line-height: 1.6;
 }
@@ -185,10 +206,12 @@ textarea:focus-visible {
    ============================================================ */
 
 .card {
-    background: var(--color-panel);
+    background:
+        linear-gradient(145deg, color-mix(in srgb, var(--color-panel) 92%, var(--color-accent) 5%), var(--color-panel));
     border: 1px solid var(--color-border);
     border-radius: var(--radius-lg);
     padding: var(--space-lg);
+    box-shadow: 0 18px 54px color-mix(in srgb, var(--gds-vibe-glow) 28%, transparent);
 }
 
 .accent-panel {
@@ -204,7 +227,8 @@ textarea:focus-visible {
    ============================================================ */
 
 .toolbar {
-    background: var(--color-panel);
+    background:
+        linear-gradient(145deg, color-mix(in srgb, var(--color-panel) 92%, var(--color-accent) 5%), var(--color-panel));
     border: 1px solid var(--color-border);
     border-radius: var(--radius-lg);
     padding: var(--space-md) var(--space-lg);
@@ -258,8 +282,22 @@ button,
     border-radius: var(--radius-sm);
     padding: var(--space-sm) var(--space-lg);
     cursor: pointer;
-    transition: background 0.15s ease, transform 0.1s ease;
-    white-space: nowrap;
+    transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease, box-shadow 140ms ease, transform 140ms ease;
+    box-shadow: 0 12px 34px color-mix(in srgb, var(--gds-vibe-glow) 58%, transparent);
+}
+
+button:hover,
+.btn:hover {
+    transform: translateY(-1px);
+}
+
+button:disabled,
+.btn[aria-disabled="true"],
+.btn:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+    transform: none;
+    box-shadow: none;
 }
 
 button:hover,

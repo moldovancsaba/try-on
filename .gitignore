@@ -6,6 +6,7 @@ vendor/CatVTON/weights/
 .venv/
 .venv311/
 venv/
+node_modules/
 .env*
 !.env.tryon-worker.example
 .config/worker_settings.json
