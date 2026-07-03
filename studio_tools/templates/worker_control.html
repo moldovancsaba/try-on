@@ -20,6 +20,7 @@
             <article class="card worker-stat">
                 <h2>Worker State</h2>
                 <p id="worker-running" class="worker-stat-value">Loading…</p>
+                <div id="worker-badges" class="badge-row" aria-label="Worker status badges"></div>
                 <p id="worker-note" class="worker-stat-meta">Waiting for runtime status.</p>
                 <p id="worker-job-active" class="worker-stat-meta">Checking active-job state.</p>
             </article>
@@ -32,12 +33,25 @@
                 <h2>Queue Health</h2>
                 <p id="queue-summary" class="worker-stat-value">Loading…</p>
                 <p id="queue-detail" class="worker-stat-meta">Waiting for queue counts.</p>
+                <p id="queue-pressure" class="worker-stat-meta">Backpressure: —</p>
             </article>
             <article class="card worker-stat">
                 <h2>Last Result</h2>
                 <p id="last-result" class="worker-stat-value">Loading…</p>
                 <p id="last-failure" class="worker-stat-meta">Waiting for event history.</p>
             </article>
+        </section>
+
+        <section id="queue-health-block" class="state-block" hidden aria-live="polite">
+            <span class="state-block-title" id="queue-health-title">Queue healthy</span>
+            <span class="state-block-detail" id="queue-health-detail"></span>
+        </section>
+
+        <section class="card" aria-labelledby="scorecard-title">
+            <h2 id="scorecard-title">Provider Scorecard</h2>
+            <div id="provider-scorecard" class="metric-grid">
+                <p class="worker-stat-meta">Loading provider metrics…</p>
+            </div>
         </section>
 
         <section class="worker-grid" aria-label="Managed local services">
@@ -156,8 +170,87 @@
             });
         }
 
+        function badge(label, variant) {
+            return `<span class="badge badge--${variant}">${label}</span>`;
+        }
+
+        function renderBadges(data) {
+            const badges = [];
+            badges.push(badge(data.workerRunning ? "Running" : "Stopped", data.workerRunning ? "ok" : "error"));
+            badges.push(badge(data.workerJobActive ? "Active Job" : "Idle", data.workerJobActive ? "info" : "neutral"));
+            if (data.enabled === false) badges.push(badge("Disabled", "warn"));
+            const bp = data.backpressure;
+            if (bp && bp.active) badges.push(badge("Backpressure", "warn"));
+            const providers = (data.providerScorecard || {}).providers || {};
+            const openCircuits = Object.entries(providers).filter(([, p]) => p.circuitOpenUntil);
+            if (openCircuits.length) badges.push(badge("Provider Timeout", "error"));
+            document.getElementById("worker-badges").innerHTML = badges.join("");
+        }
+
+        function renderQueueHealthBlock(data) {
+            const block = document.getElementById("queue-health-block");
+            const title = document.getElementById("queue-health-title");
+            const detail = document.getElementById("queue-health-detail");
+            block.classList.remove("state-block--ok", "state-block--warn", "state-block--error");
+
+            const problems = [];
+            let severity = "ok";
+            if (!data.workerRunning) { problems.push("Worker process is not running."); severity = "error"; }
+            if (data.enabled === false) { problems.push("Worker is disabled by local settings."); if (severity !== "error") severity = "warn"; }
+            if (data.queueError) { problems.push(`Queue counts unavailable: ${data.queueError}`); if (severity !== "error") severity = "warn"; }
+            const bp = data.backpressure;
+            if (bp && bp.active) { problems.push(`Backpressure active: ${(bp.reasons || []).join(", ") || "overloaded"}.`); if (severity !== "error") severity = "warn"; }
+            const providers = (data.providerScorecard || {}).providers || {};
+            const openCircuits = Object.entries(providers).filter(([, p]) => p.circuitOpenUntil).map(([name]) => name);
+            if (openCircuits.length) { problems.push(`Provider circuit open: ${openCircuits.join(", ")}.`); severity = "error"; }
+
+            if (!problems.length) { block.hidden = true; return; }
+            block.hidden = false;
+            block.classList.add(`state-block--${severity}`);
+            title.textContent = severity === "error" ? "Queue degraded — action needed" : "Queue needs attention";
+            detail.textContent = problems.join(" ");
+        }
+
+        function renderScorecard(data) {
+            const grid = document.getElementById("provider-scorecard");
+            const providers = (data.providerScorecard || {}).providers || {};
+            const names = Object.keys(providers);
+            if (!names.length) {
+                grid.innerHTML = '<p class="worker-stat-meta">No provider metrics recorded yet.</p>';
+                return;
+            }
+            grid.innerHTML = names.map((name) => {
+                const p = providers[name];
+                const total = p.requestCount || 0;
+                const rate = total ? Math.round((p.successCount / total) * 100) : 100;
+                const circuit = p.circuitOpenUntil ? badge("Circuit Open", "error") : "";
+                const breakdown = [
+                    p.failureCount ? badge(`${p.failureCount} fail`, "error") : "",
+                    p.timeoutCount ? badge(`${p.timeoutCount} timeout`, "warn") : "",
+                    p.slowCount ? badge(`${p.slowCount} slow`, "warn") : "",
+                    (!p.failureCount && !p.timeoutCount && !p.slowCount) ? badge("clean", "ok") : "",
+                ].join("");
+                return `<article class="metric-card">
+                    <span class="metric-card-label">${name}</span>
+                    <span class="metric-card-value">${rate}%</span>
+                    <span class="metric-card-meta">${total} req · p50 ${p.p50LatencySeconds != null ? p.p50LatencySeconds.toFixed(1) + "s" : "—"}</span>
+                    <div class="metric-card-breakdown">${breakdown}${circuit}</div>
+                </article>`;
+            }).join("");
+        }
+
         function renderStatus(data) {
             setText("worker-running", data.workerRunning ? "Running" : "Stopped");
+            renderBadges(data);
+            renderQueueHealthBlock(data);
+            renderScorecard(data);
+            const bp = data.backpressure;
+            const oldest = data.oldestReadyAgeSeconds;
+            const bpText = bp && bp.active
+                ? `Backpressure: ${(bp.reasons || []).join(", ") || "active"}`
+                : "Backpressure: none";
+            const ageText = (oldest != null) ? ` · oldest ready ${oldest}s` : "";
+            setText("queue-pressure", bpText + ageText);
             const jobActive = Boolean(data.workerJobActive);
             setText("worker-job-active", `Active job: ${jobActive ? "Yes" : "No"}`);
             setText("worker-note", data.enabled === false ? "Worker is disabled by local settings." : `Poll interval: ${data.pollIntervalSeconds || "unknown"} seconds`);

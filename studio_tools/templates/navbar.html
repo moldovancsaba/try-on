@@ -1,10 +1,12 @@
 <nav class="navbar">
     <a href="/try-on" class="nav-logo">TRY-ON STUDIO</a>
+    <input type="checkbox" id="nav-toggle" class="nav-toggle">
+    <label for="nav-toggle" class="nav-toggle-label" aria-label="Toggle navigation">☰</label>
     <div class="nav-links">
-        <a href="/try-on" class="nav-link {{ 'active' if active == 'try-on' else '' }}">Try-On</a>
-        <a href="/motogp-leather-magic" class="nav-link {{ 'active' if active == 'motogp' else '' }}">MotoGP Leather Magic</a>
-        <a href="/worker-control" class="nav-link {{ 'active' if active == 'worker-control' else '' }}">Worker Control</a>
-        <a href="/set-garment" class="nav-link {{ 'active' if active == 'set-garment' else '' }}">Setup Garment</a>
-        <a href="/garments" class="nav-link {{ 'active' if active == 'garments' else '' }}">Library</a>
+        <a href="/try-on" class="nav-link {{ 'active' if active == 'try-on' else '' }}" aria-current="{{ 'page' if active == 'try-on' else 'false' }}">Try-On</a>
+        <a href="/motogp-leather-magic" class="nav-link {{ 'active' if active == 'motogp' else '' }}" aria-current="{{ 'page' if active == 'motogp' else 'false' }}">MotoGP Leather Magic</a>
+        <a href="/worker-control" class="nav-link {{ 'active' if active == 'worker-control' else '' }}" aria-current="{{ 'page' if active == 'worker-control' else 'false' }}">Worker Control</a>
+        <a href="/set-garment" class="nav-link {{ 'active' if active == 'set-garment' else '' }}" aria-current="{{ 'page' if active == 'set-garment' else 'false' }}">Setup Garment</a>
+        <a href="/garments" class="nav-link {{ 'active' if active == 'garments' else '' }}" aria-current="{{ 'page' if active == 'garments' else 'false' }}">Library</a>
     </div>
 </nav>

@@ -2,15 +2,15 @@
 
 ## Installed baseline
 
-- `@doneisbetter/gds-core`: `3.4.3`
-- `@doneisbetter/gds-admin`: `3.4.3`
-- `@doneisbetter/gds-theme`: `3.4.3`
+- `@sovereignsquad/gds-core`: `3.9.0`
+- `@sovereignsquad/gds-admin`: `3.9.0`
+- `@sovereignsquad/gds-theme`: `3.9.0`
 
 The local try-on environment is a Python/FastAPI/Gradio app with static Jinja templates. It does not currently run a React application shell, so GDS React components cannot be used directly without a frontend migration.
 
 ## What is new and useful in GDS 3.4
 
-- Theme presets and vibe tokens through `@doneisbetter/gds-theme`.
+- Theme presets and vibe tokens through `@sovereignsquad/gds-theme`.
 - Mobile navigation behavior support for collapsible app shells.
 - Standard state components such as `StateBlock`, `StatusBadge`, `MetricCard`, `ProgressCard`, `ResultSummary`, and `InlineAlert`.
 - Operator/admin surfaces such as `ResponsiveDataView`, `AdminReviewLayout`, `EditorScaffold`, `StatsStrip`, `WorkspaceHeader`, and standardized form sections.
@@ -20,43 +20,46 @@ The local try-on environment is a Python/FastAPI/Gradio app with static Jinja te
 
 ## Implemented local bridge
 
-`studio_tools/static/global.css` now defines a static GDS 3.4 bridge:
+`studio_tools/static/global.css` defines a static GDS 3.9 bridge:
 
 - maps local colors to `--gds-vibe-*` tokens
 - applies GDS-like surface gradients, card shadows, and button motion
+- provides GDS component mirrors: `.badge` (StatusBadge), `.state-block` (StateBlock),
+  `.metric-card` (MetricCard), `.card-grid`/`.data-card` (ResponsiveDataView),
+  `.notice` (InlineAlert), `.dropzone` (accessible upload states)
+- CSS-only mobile nav collapse + `prefers-reduced-motion` support
 - preserves existing FastAPI/Jinja templates and Gradio pages
 - avoids introducing a second frontend runtime
 
-## Recommended next implementation for the local try-on app
+## Implemented operator surfaces (GDS 3.9 adoption)
 
-1. Worker Control page
-   - Add GDS-style status badges for Running, Active Job, Backpressure, Provider Timeout, and Disabled.
-   - Add a visible `StateBlock` equivalent for degraded queue health.
-   - Show oldest queued age and backpressure reason as first-class fields.
+1. Worker Control page — **done**
+   - Status badges for Running, Active Job, Backpressure, Provider Timeout, and Disabled.
+   - `StateBlock` for degraded queue health (worker down, disabled, queue error, open circuit).
+   - Backpressure reason and oldest-ready age surfaced in Queue Health.
 
-2. Queue and provider observability
-   - Add a Provider Scorecard panel using GDS metric-card semantics.
-   - Split timeout, provider, local runtime, validation, upload, and Camera callback failures.
-   - Add operator guidance beside each failure class.
+2. Queue and provider observability — **done**
+   - Provider Scorecard panel with metric-card semantics (success rate, p50 latency).
+   - Per-provider failure/timeout/slow breakdown and circuit state.
+   - Note: failures are split at provider granularity from the worker scorecard; a finer
+     taxonomy (validation vs upload vs callback) would need dedicated status fields.
 
-3. Garment Library
-   - Replace the plain list with a responsive card grid.
-   - Add empty, loading, and error states.
-   - Add accessible actions for View, Rebuild Asset, Download Package, and Disable.
+3. Garment Library — **done (partial)**
+   - Responsive `.card-grid` with `.data-card` items and an accessible empty state.
+   - `View Package` action served via the new `/packages` static mount.
+   - Rebuild / Download / Disable actions still need backend endpoints before wiring.
 
-4. Setup Garment page
-   - Replace browser `alert()` flows with inline accessible notices.
-   - Add upload/dropzone states: idle, selected, failed, unsupported type, too large.
-   - Add keyboard-visible point placement guidance and undo feedback.
+4. Setup Garment page — **done (partial)**
+   - Browser `alert()` replaced with inline accessible `.notice` messages (`aria-live`).
+   - Dropzone with idle / drag-over / selected / error states + client type/size validation.
+   - Keyboard undo ('U') retained; full keyboard point-placement on the canvas is deferred.
 
-5. Landing page and navigation
-   - Add a mobile collapse menu following the GDS mobile navigation behavior.
-   - Add aria-current on active navigation links.
-   - Add reduced-motion-safe card hover behavior.
+5. Landing page and navigation — **done**
+   - CSS-only mobile collapse menu, `aria-current="page"` on active links, reduced-motion-safe hover.
 
-6. Gradio try-on surfaces
-   - Keep Gradio theme values mapped to local tokens.
-   - Add a compact operations banner above Gradio apps that reports model readiness and worker state.
+6. Gradio try-on surfaces — **done**
+   - Compact operations banner above the Gradio apps reporting model readiness and worker state
+     (server-rendered snapshot per page load).
 
 ## Migration boundary
 

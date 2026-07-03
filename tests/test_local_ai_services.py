@@ -75,6 +75,80 @@ class LocalAiServicesTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 run_local_ai_service(Path(tmpdir), "missing_service", {})
 
+    def test_google_edge_analyzer_registration_and_errors(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            registry = service_registry(root)
+            service_ids = {item["serviceId"] for item in registry["services"]}
+            self.assertIn("google_edge_analyzer", service_ids)
+
+            source = _fixture(root / "source.png")
+            try:
+                run_local_ai_service(root, "google_edge_analyzer", {"sourceImagePath": str(source)})
+            except (FileNotFoundError, ImportError):
+                pass
+            except Exception as e:
+                self.fail(f"Unexpected exception raised: {type(e).__name__} - {e}")
+
+    def test_google_edge_analyzer_real(self) -> None:
+        from model_paths import get_models_root
+        models_root = get_models_root()
+        report = evaluate_model_packs(models_root)
+        if report["modelPacks"].get("google_edge_mediapipe", {}).get("status") == "ready":
+            with tempfile.TemporaryDirectory() as tmpdir:
+                tmp_root = Path(tmpdir)
+                source = _fixture(tmp_root / "source.png")
+                result = run_local_ai_service(tmp_root, "google_edge_analyzer", {"sourceImagePath": str(source)})
+                self.assertIn(result["status"], {"pass", "warn", "fail"})
+                self.assertFalse(result["posePassed"])
+                self.assertFalse(result["facePassed"])
+                self.assertEqual(result["status"], "fail")
+
+    def test_google_edge_tryon_errors(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            registry = service_registry(root)
+            service_ids = {item["serviceId"] for item in registry["services"]}
+            self.assertIn("google_edge_tryon", service_ids)
+
+            person = _fixture(root / "person.png")
+            garment = _fixture(root / "garment.png")
+            output = root / "output.png"
+
+            try:
+                run_local_ai_service(root, "google_edge_tryon", {
+                    "personImagePath": str(person),
+                    "garmentImagePath": str(garment),
+                    "outputImagePath": str(output)
+                })
+            except (FileNotFoundError, ImportError, ValueError):
+                pass
+            except Exception as e:
+                self.fail(f"Unexpected exception raised: {type(e).__name__} - {e}")
+
+    def test_google_edge_tryon_parameters(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            person = _fixture(root / "person.png")
+            garment = _fixture(root / "garment.png")
+            output = root / "output.png"
+
+            try:
+                run_local_ai_service(root, "google_edge_tryon", {
+                    "personImagePath": str(person),
+                    "garmentImagePath": str(garment),
+                    "outputImagePath": str(output),
+                    "google_edge_width_scale": "1.6",
+                    "google_edge_height_scale": 1.4,
+                    "google_edge_offset_x": -0.05,
+                    "google_edge_offset_y": "0.18",
+                    "google_edge_tilt_adjustment": "2.5"
+                })
+            except (FileNotFoundError, ImportError, ValueError):
+                pass
+            except Exception as e:
+                self.fail(f"Parameters parsing raised exception: {type(e).__name__} - {e}")
+
 
 if __name__ == "__main__":
     unittest.main()

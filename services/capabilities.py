@@ -88,7 +88,21 @@ ASSETS: tuple[AssetSpec, ...] = (
             },
         },
     ),
+    AssetSpec(
+        key="google_edge_mediapipe",
+        label="Google AI Edge MediaPipe Models",
+        relative_path="processors/google-edge-mediapipe",
+        required_files=("pose_landmarker_full.task", "face_landmarker.task"),
+        source={
+            "kind": "url_files",
+            "files": {
+                "pose_landmarker_full.task": "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task",
+                "face_landmarker.task": "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
+            },
+        },
+    ),
 )
+
 
 ASSET_MAP = {asset.key: asset for asset in ASSETS}
 

@@ -74,6 +74,7 @@ MODEL_PACKS: tuple[ModelPack, ...] = (
     ModelPack("segmentation_optional", "Optional local segmentation models", ("processors/catvton-segmentation",)),
     ModelPack("inpainting_optional", "Optional local inpainting models", ("checkpoints/sd15-inpainting",)),
     ModelPack("upscale_optional", "Optional local upscaling/restoration models", ("processors/face-restoration",), optional_paths=("processors/upscalers",)),
+    ModelPack("google_edge_mediapipe", "Google AI Edge MediaPipe models", ("processors/google-edge-mediapipe",)),
 )
 
 
@@ -88,6 +89,8 @@ SERVICES: tuple[LocalAiService, ...] = (
     LocalAiService("synthetic_fixture_generator", "Synthetic fixture generator", "Validation", ("pillow_core",), "SyntheticFixtureJob", "SyntheticFixtureSet"),
     LocalAiService("local_ai_services_console", "Local AI services console", "Operator UX", ("pillow_core",), "OperatorConsoleContract", "GDSOperatorSurface", ui_required=True),
     LocalAiService("local_ai_service_reporting", "Local AI service reporting", "Analytics", ("pillow_core",), "ReportRequest", "LocalAiServiceReport"),
+    LocalAiService("google_edge_analyzer", "Google AI Edge analyzer", "Quality", ("google_edge_mediapipe",), "GoogleEdgeAnalyzerJob", "GoogleEdgeAnalyzerResult"),
+    LocalAiService("google_edge_tryon", "Google AI Edge virtual try-on overlay", "Product Studio", ("google_edge_mediapipe",), "GoogleEdgeTryOnJob", "LocalAiArtifact"),
 )
 
 
@@ -298,9 +301,301 @@ def tryon_quality_gate(app_root: Path, payload: dict[str, Any]) -> dict[str, Any
         brand = brand_safety_analyzer(app_root, {"sourceImagePath": payload["sourceImagePath"], "outputImagePath": payload["outputImagePath"]})
         if brand["status"] == "fail":
             warnings.append("brand_safety_failed")
+
+    edge_analysis = None
+    if payload.get("sourceImagePath"):
+        try:
+            report = evaluate_model_packs(app_root)
+            if report["modelPacks"].get("google_edge_mediapipe", {}).get("status") == "ready":
+                edge_analysis = google_edge_analyzer(app_root, {"sourceImagePath": payload["sourceImagePath"]})
+                if edge_analysis["status"] == "fail":
+                    failures.append("pose_validation_failed")
+                elif edge_analysis["status"] == "warn":
+                    warnings.append("pose_validation_warning")
+        except Exception as e:
+            print(f"[warning] Google edge analyzer skipped in quality gate: {e}")
+
     status = "fail" if failures else "warn" if warnings else "pass"
     recommendation = "manual_reject" if failures else "rerun" if "brand_safety_failed" in warnings else "review"
-    return {"serviceId": "tryon_quality_gate", "status": status, "recommendation": recommendation, "checks": {"failures": failures, "warnings": warnings, "metrics": metrics, "brandSafety": brand}}
+    return {"serviceId": "tryon_quality_gate", "status": status, "recommendation": recommendation, "checks": {"failures": failures, "warnings": warnings, "metrics": metrics, "brandSafety": brand, "googleEdgeAnalysis": edge_analysis}}
+
+
+def google_edge_analyzer(app_root: Path, payload: dict[str, Any]) -> dict[str, Any]:
+    job_id = payload.get("jobId") or f"edge-{int(time.time())}"
+    source_path = _resolve_input_path(payload["sourceImagePath"])
+
+    try:
+        import mediapipe as mp
+        from mediapipe.tasks import python
+        from mediapipe.tasks.python import vision
+    except ImportError as e:
+        raise ImportError(f"mediapipe_not_installed: {e}")
+
+    from model_paths import get_models_root
+    models_root = get_models_root()
+    pose_model_path = models_root / "processors" / "google-edge-mediapipe" / "pose_landmarker_full.task"
+    face_model_path = models_root / "processors" / "google-edge-mediapipe" / "face_landmarker.task"
+
+    if not pose_model_path.exists() or not face_model_path.exists():
+        raise FileNotFoundError("missing_mediapipe_task_files")
+
+    image = _open_image(source_path)
+    img_rgb = np.array(image.convert("RGB"))
+    mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=img_rgb)
+
+    pose_options = vision.PoseLandmarkerOptions(
+        base_options=python.BaseOptions(model_asset_path=str(pose_model_path)),
+        output_segmentation_masks=False
+    )
+
+    pose_passed = False
+    pose_checks = []
+    pose_metrics = {}
+
+    with vision.PoseLandmarker.create_from_options(pose_options) as pose_landmarker:
+        pose_result = pose_landmarker.detect(mp_image)
+        if pose_result.pose_landmarks:
+            pose_passed = True
+            landmarks = pose_result.pose_landmarks[0]
+
+            ls = landmarks[11]
+            rs = landmarks[12]
+            le = landmarks[13]
+            re = landmarks[14]
+            lw = landmarks[15]
+            rw = landmarks[16]
+            lh = landmarks[23]
+            rh = landmarks[24]
+
+            arms_down = (le.y > ls.y) and (re.y > rs.y) and (lw.y > ls.y) and (rw.y > rs.y)
+            pose_checks.append({
+                "id": "arms_down",
+                "status": "pass" if arms_down else "fail",
+                "reason": "Arms are pointing downwards" if arms_down else "Arms or hands are raised"
+            })
+
+            shoulder_tilt = abs(ls.y - rs.y)
+            shoulder_aligned = shoulder_tilt < 0.1
+            pose_checks.append({
+                "id": "shoulder_alignment",
+                "status": "pass" if shoulder_aligned else "warn",
+                "reason": f"Shoulder tilt is {shoulder_tilt:.4f}"
+            })
+
+            torso_valid = (lh.y > ls.y) and (rh.y > rs.y)
+            pose_checks.append({
+                "id": "torso_validity",
+                "status": "pass" if torso_valid else "fail",
+                "reason": "Hips are below shoulders" if torso_valid else "Invalid torso structure"
+            })
+
+            nose = landmarks[0]
+            left_x = min(ls.x, rs.x)
+            right_x = max(ls.x, rs.x)
+            facing_front = left_x < nose.x < right_x
+            pose_checks.append({
+                "id": "facing_camera",
+                "status": "pass" if facing_front else "warn",
+                "reason": "Nose is positioned between shoulders" if facing_front else "Nose is out of center"
+            })
+
+            pose_metrics = {
+                "shoulderTilt": float(shoulder_tilt),
+                "leftShoulder": {"x": float(ls.x), "y": float(ls.y), "z": float(ls.z)},
+                "rightShoulder": {"x": float(rs.x), "y": float(rs.y), "z": float(rs.z)},
+                "leftElbow": {"x": float(le.x), "y": float(le.y)},
+                "rightElbow": {"x": float(re.x), "y": float(re.y)},
+                "leftWrist": {"x": float(lw.x), "y": float(lw.y)},
+                "rightWrist": {"x": float(rw.x), "y": float(rw.y)},
+            }
+        else:
+            pose_checks.append({
+                "id": "pose_detected",
+                "status": "fail",
+                "reason": "No body pose was detected"
+            })
+
+    face_options = vision.FaceLandmarkerOptions(
+        base_options=python.BaseOptions(model_asset_path=str(face_model_path)),
+        num_faces=1
+    )
+
+    face_passed = False
+    face_checks = []
+
+    with vision.FaceLandmarker.create_from_options(face_options) as face_landmarker:
+        face_result = face_landmarker.detect(mp_image)
+        if face_result.face_landmarks:
+            face_passed = True
+            face_checks.append({
+                "id": "face_detected",
+                "status": "pass",
+                "reason": "Face detected successfully"
+            })
+        else:
+            face_checks.append({
+                "id": "face_detected",
+                "status": "warn",
+                "reason": "No face detected (image might be neck-down cropped)"
+            })
+
+    all_checks = pose_checks + face_checks
+    has_fail = any(c["status"] == "fail" for c in all_checks)
+    has_warn = any(c["status"] == "warn" for c in all_checks)
+    status = "fail" if has_fail else "warn" if has_warn else "pass"
+
+    result = {
+        "serviceId": "google_edge_analyzer",
+        "schemaVersion": 1,
+        "status": status,
+        "posePassed": pose_passed,
+        "facePassed": face_passed,
+        "checks": all_checks,
+        "metrics": {
+            **pose_metrics,
+            "numFacesDetected": 1 if face_passed else 0
+        }
+    }
+
+    _save_job_record(app_root, {
+        "jobId": job_id,
+        "serviceId": "google_edge_analyzer",
+        "status": "completed",
+        "result": result,
+        "updatedAt": now_iso()
+    })
+
+    return result
+
+
+def google_edge_tryon(app_root: Path, payload: dict[str, Any]) -> dict[str, Any]:
+    job_id = payload.get("jobId") or f"tryon-{int(time.time())}"
+    person_path = _resolve_input_path(payload["personImagePath"])
+    garment_path = _resolve_input_path(payload["garmentImagePath"])
+    output_path = Path(payload["outputImagePath"]).expanduser().resolve()
+
+    try:
+        import mediapipe as mp
+        from mediapipe.tasks import python
+        from mediapipe.tasks.python import vision
+    except ImportError as e:
+        raise ImportError(f"mediapipe_not_installed: {e}")
+
+    from model_paths import get_models_root
+    models_root = get_models_root()
+    pose_model_path = models_root / "processors" / "google-edge-mediapipe" / "pose_landmarker_full.task"
+
+    if not pose_model_path.exists():
+        raise FileNotFoundError("missing_mediapipe_pose_task_file")
+
+    person_img = _open_image(person_path)
+    garment_img = _open_image(garment_path)
+
+    img_rgb = np.array(person_img.convert("RGB"))
+    mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=img_rgb)
+
+    pose_options = vision.PoseLandmarkerOptions(
+        base_options=python.BaseOptions(model_asset_path=str(pose_model_path)),
+        output_segmentation_masks=False
+    )
+
+    with vision.PoseLandmarker.create_from_options(pose_options) as pose_landmarker:
+        pose_result = pose_landmarker.detect(mp_image)
+        if not pose_result.pose_landmarks:
+            raise ValueError("no_body_pose_detected")
+
+        landmarks = pose_result.pose_landmarks[0]
+        ls = landmarks[11]
+        rs = landmarks[12]
+        lh = landmarks[23]
+        rh = landmarks[24]
+
+        img_w, img_h = person_img.size
+
+        shoulder_dist = math.sqrt((ls.x - rs.x)**2 + (ls.y - rs.y)**2)
+        shoulder_center_y = (ls.y + rs.y) / 2
+        hip_center_y = (lh.y + rh.y) / 2
+        torso_h = abs(shoulder_center_y - hip_center_y)
+
+        def _get_float(key: str, default: float) -> float:
+            val = payload.get(key)
+            if val is None:
+                return default
+            try:
+                return float(val)
+            except (ValueError, TypeError):
+                return default
+
+        width_scale = _get_float("google_edge_width_scale", 1.55)
+        height_scale = _get_float("google_edge_height_scale", 1.35)
+        offset_x = _get_float("google_edge_offset_x", 0.0)
+        offset_y = _get_float("google_edge_offset_y", 0.15)
+        tilt_adjustment = _get_float("google_edge_tilt_adjustment", 0.0)
+
+        target_width = int(shoulder_dist * img_w * width_scale)
+        target_height = int(torso_h * img_h * height_scale)
+
+        if target_width <= 0 or target_height <= 0:
+            raise ValueError("invalid_torso_dimensions")
+
+        bbox = garment_img.getbbox()
+        if bbox:
+            garment_img = garment_img.crop(bbox)
+
+        garment_scaled = garment_img.resize((target_width, target_height), Image.Resampling.LANCZOS)
+
+        angle_rad = math.atan2(ls.y - rs.y, ls.x - rs.x)
+        angle_deg = math.degrees(angle_rad) + tilt_adjustment
+
+        garment_rotated = garment_scaled.rotate(-angle_deg, expand=True, resample=Image.Resampling.BICUBIC)
+
+        shoulder_center_x = (ls.x + rs.x) / 2 * img_w
+        paste_center_x = shoulder_center_x + (offset_x * shoulder_dist * img_w)
+        paste_center_y = (shoulder_center_y + offset_y * torso_h) * img_h
+
+        paste_x = int(paste_center_x - garment_rotated.width / 2)
+        paste_y = int(paste_center_y - garment_rotated.height / 2)
+
+        overlay = Image.new("RGBA", person_img.size, (0, 0, 0, 0))
+        overlay.paste(garment_rotated, (paste_x, paste_y), mask=garment_rotated)
+
+        result_img = Image.alpha_composite(person_img.convert("RGBA"), overlay)
+
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        if output_path.suffix.lower() in {".jpg", ".jpeg"}:
+            result_img.convert("RGB").save(output_path, "JPEG", quality=95)
+        else:
+            result_img.save(output_path, "PNG")
+
+        metadata = {
+            "schemaVersion": LOCAL_AI_ARTIFACT_SCHEMA_VERSION,
+            "serviceId": "google_edge_tryon",
+            "jobId": job_id,
+            "personImagePath": str(person_path),
+            "garmentImagePath": str(garment_path),
+            "outputImagePath": str(output_path),
+            "metrics": {
+                "shoulderDistance": float(shoulder_dist),
+                "torsoHeight": float(torso_h),
+                "shoulderTiltAngle": float(angle_deg),
+                "widthScale": float(width_scale),
+                "heightScale": float(height_scale),
+                "offsetX": float(offset_x),
+                "offsetY": float(offset_y),
+                "tiltAdjustment": float(tilt_adjustment)
+            }
+        }
+        metadata_path = _write_metadata(output_path, metadata)
+
+        return {
+            "jobId": job_id,
+            "status": "completed",
+            "artifact": {
+                "path": str(output_path),
+                "metadataPath": str(metadata_path),
+                "metrics": _image_metrics(result_img)
+            }
+        }
 
 
 def local_inpainting_cleanup(app_root: Path, payload: dict[str, Any]) -> dict[str, Any]:
@@ -377,6 +672,8 @@ RUNNERS = {
     "product_photo_cleanup": product_photo_cleanup,
     "brand_safety_analyzer": brand_safety_analyzer,
     "tryon_quality_gate": tryon_quality_gate,
+    "google_edge_analyzer": google_edge_analyzer,
+    "google_edge_tryon": google_edge_tryon,
     "local_inpainting_cleanup": local_inpainting_cleanup,
     "campaign_variant_generator": campaign_variant_generator,
     "event_social_still_builder": event_social_still_builder,

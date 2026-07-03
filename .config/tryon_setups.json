@@ -163,5 +163,23 @@
       "steps": 32,
       "garment_des": "High-precision full-body motorcycle leather suit virtual try-on over the entire model (head-to-toe coverage with natural drape across torso, sleeves, hips, and lower body). Preserve the model's face, body shape, and pose exactly. Preserve every garment logo, text, lettering, badge, symbol, seam, stitch, zipper, reflective panel, and print detail exactly as in the source garment image: exact wording, font, color, scale, orientation, placement, spacing, and edge sharpness. Never blur, recolor, redraw, crop, or stylize readable text or branding. For transparent PNG garments, strictly preserve alpha-safe edges with no halo or bleed, never fill transparent pixels with synthetic color, and keep garment contour fidelity. Prioritize source garment identity and texture fidelity above any hallucinated details."
     }
+  },
+  {
+    "setupId": "google_edge_tryon",
+    "provider": "local",
+    "name": "Google AI Edge Instant Preview",
+    "description": "Instant keypoint-guided overlay try-on preview using on-device tracking.",
+    "active": true,
+    "isDefault": false,
+    "rank": 25,
+    "revision": "google-edge-tryon-v1",
+    "config": {
+      "processing_profile": "google_edge_tryon",
+      "google_edge_width_scale": 1.55,
+      "google_edge_height_scale": 1.35,
+      "google_edge_offset_x": 0.0,
+      "google_edge_offset_y": 0.15,
+      "google_edge_tilt_adjustment": 0.0
+    }
   }
 ]

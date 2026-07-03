@@ -36,6 +36,11 @@ TRYON_SETUP_FIELD_ALLOWLIST = {
     "enable_deep_texture",
     "warp_strength",
     "garment_des",
+    "google_edge_width_scale",
+    "google_edge_height_scale",
+    "google_edge_offset_x",
+    "google_edge_offset_y",
+    "google_edge_tilt_adjustment",
 }
 
 SETUP_CATALOG_ENV = "TRYON_SETUP_CATALOG_PATH"

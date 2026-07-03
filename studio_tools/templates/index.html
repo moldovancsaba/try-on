@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Try-On Setup Studio</title>
     <link rel="stylesheet" href="/static/global.css">
 </head>
@@ -9,22 +10,28 @@
     {% include 'navbar.html' %}
 
 <div class="container">
+    <div id="notices" class="notice-stack" role="status" aria-live="polite"></div>
+
     <div class="toolbar">
         <input type="text" id="packageName" placeholder="Package Name (e.g. ufa_jersey)">
-        
-        <input type="file" id="fileUpload" accept="image/*">
-        
+
+        <label class="dropzone" id="dropzone" tabindex="0">
+            <span class="dropzone-title" id="dropzoneTitle">Drop garment image</span>
+            <span class="dropzone-hint" id="dropzoneHint">or click to browse · PNG/JPG · max 25 MB</span>
+            <input type="file" id="fileUpload" accept="image/*" hidden>
+        </label>
+
         <select id="mannequinSelect">
             <option value="front">Mannequin: Front</option>
             <option value="left">Mannequin: Front-Left (3/4)</option>
             <option value="right">Mannequin: Front-Right (3/4)</option>
         </select>
-        
+
         <select id="pantLength">
             <option value="default">Pants: Default / Long</option>
             <option value="shorts">Pants: Shorts</option>
         </select>
-        
+
         <select id="sleeveLength">
             <option value="default">Sleeves: Default / Long</option>
             <option value="short_sleeve">Sleeves: Short</option>
@@ -33,9 +40,9 @@
 
         <button onclick="savePackage()">Export Package</button>
     </div>
-    
+
     <div class="instructions">
-        <strong>Instructions:</strong> Click on the Clothing to set an anchor point, then click the exact matching anatomical location on the Mannequin. 
+        <strong>Instructions:</strong> Click on the Clothing to set an anchor point, then click the exact matching anatomical location on the Mannequin.
         Aim for 8-12 points (Shoulders, armpits, hem, logos). Press 'U' to undo the last click.
     </div>
 
@@ -49,7 +56,7 @@
             <canvas id="canvasB" width="512" height="1024"></canvas>
         </div>
     </div>
-    
+
     <div class="point-list" id="pointList">
         <h3>Anchor Points (<span id="pointCount">0</span>/16)</h3>
         <div id="pointsContainer"></div>
@@ -57,6 +64,18 @@
 </div>
 
 <script>
+    const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
+
+    // Inline accessible notices — replaces browser alert().
+    function notify(message, type = "info") {
+        const stack = document.getElementById("notices");
+        const item = document.createElement("div");
+        item.className = `notice notice--${type}`;
+        item.textContent = message;
+        stack.appendChild(item);
+        setTimeout(() => item.remove(), 6000);
+    }
+
     const canvasA = document.getElementById('canvasA');
     const ctxA = canvasA.getContext('2d');
     const canvasB = document.getElementById('canvasB');
@@ -71,19 +90,19 @@
     let garmentImg = new Image();
     let garmentFilename = '';
     let mannequinImg = new Image();
-    
+
     // State
     let allPoints = { front: [], left: [], right: [] };
     let points = allPoints['front'];
-    let pendingGarmentPoint = null; 
+    let pendingGarmentPoint = null;
     let currentMannequin = 'front';
-    
+
     // Load Mannequin
     function loadMannequin() {
         mannequinImg.src = `/maps/mannequin_${currentMannequin}.png`;
         mannequinImg.onload = draw;
     }
-    
+
     document.getElementById('mannequinSelect').addEventListener('change', (e) => {
         currentMannequin = e.target.value;
         points = allPoints[currentMannequin]; // switch active point array instead of clearing
@@ -91,29 +110,63 @@
         updatePointList();
         loadMannequin();
     });
-    
-    // Handle Upload
-    document.getElementById('fileUpload').addEventListener('change', async (e) => {
-        const file = e.target.files[0];
+
+    // Dropzone + upload with accessible states.
+    const dropzone = document.getElementById('dropzone');
+    const dropzoneTitle = document.getElementById('dropzoneTitle');
+    const fileInput = document.getElementById('fileUpload');
+
+    function setDropState(state, title) {
+        dropzone.classList.remove('is-dragover', 'is-selected', 'is-error');
+        if (state) dropzone.classList.add(state);
+        if (title) dropzoneTitle.textContent = title;
+    }
+
+    async function handleFile(file) {
         if (!file) return;
-        
+        if (!file.type.startsWith('image/')) {
+            setDropState('is-error', 'Unsupported file type');
+            notify('Unsupported file type. Upload a PNG or JPG image.', 'error');
+            return;
+        }
+        if (file.size > MAX_UPLOAD_BYTES) {
+            setDropState('is-error', 'File too large');
+            notify('Image is larger than 25 MB. Please upload a smaller file.', 'error');
+            return;
+        }
         const formData = new FormData();
         formData.append('file', file);
-        
-        const res = await fetch('/upload_garment', { method: 'POST', body: formData });
-        const data = await res.json();
-        
-        garmentFilename = data.filename;
-        garmentImg.src = data.url;
-        garmentImg.onload = draw;
+        try {
+            const res = await fetch('/upload_garment', { method: 'POST', body: formData });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const data = await res.json();
+            garmentFilename = data.filename;
+            garmentImg.src = data.url;
+            garmentImg.onload = draw;
+            setDropState('is-selected', file.name);
+            notify(`Loaded garment: ${file.name}`, 'success');
+        } catch (err) {
+            setDropState('is-error', 'Upload failed');
+            notify(`Upload failed: ${err.message}`, 'error');
+        }
+    }
+
+    fileInput.addEventListener('change', (e) => handleFile(e.target.files[0]));
+    dropzone.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInput.click(); }
     });
-    
+    ['dragenter', 'dragover'].forEach((evt) =>
+        dropzone.addEventListener(evt, (e) => { e.preventDefault(); dropzone.classList.add('is-dragover'); }));
+    ['dragleave', 'drop'].forEach((evt) =>
+        dropzone.addEventListener(evt, (e) => { e.preventDefault(); dropzone.classList.remove('is-dragover'); }));
+    dropzone.addEventListener('drop', (e) => handleFile(e.dataTransfer.files[0]));
+
     // Drawing
     function draw() {
         // Clear
         ctxA.clearRect(0, 0, canvasA.width, canvasA.height);
         ctxB.clearRect(0, 0, canvasB.width, canvasB.height);
-        
+
         // Draw Images (scale to fit if needed, but assuming standard sizes for now)
         if (garmentImg.src) {
             // center and scale
@@ -124,11 +177,11 @@
             const y = (canvasA.height - h) / 2;
             ctxA.drawImage(garmentImg, x, y, w, h);
         }
-        
+
         if (mannequinImg.src) {
             ctxB.drawImage(mannequinImg, 0, 0, canvasB.width, canvasB.height);
         }
-        
+
         // Draw Points
         points.forEach((p, i) => {
             drawDot(ctxA, p.garment.x, p.garment.y, i + 1, COLOR_POINT_PLACED);
@@ -142,26 +195,26 @@
             drawDot(ctxA, pendingGarmentPoint.x, pendingGarmentPoint.y, points.length + 1, COLOR_POINT_PENDING);
         }
     }
-    
+
     function drawDot(ctx, x, y, label, color) {
         ctx.beginPath();
         ctx.arc(x, y, 6, 0, 2 * Math.PI);
         ctx.fillStyle = color;
         ctx.fill();
         ctx.stroke();
-        
+
         ctx.fillStyle = COLOR_DOT_LABEL;
         ctx.font = '10px Arial';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText(label, x, y);
     }
-    
+
     // Interaction
     canvasA.addEventListener('mousedown', (e) => {
         if (pendingGarmentPoint) return; // Must finish current point first
-        if (points.length >= 16) { alert('Maximum 16 points reached.'); return; }
-        
+        if (points.length >= 16) { notify('Maximum 16 points reached.', 'warn'); return; }
+
         const rect = canvasA.getBoundingClientRect();
         pendingGarmentPoint = {
             x: e.clientX - rect.left,
@@ -169,26 +222,26 @@
         };
         draw();
     });
-    
+
     canvasB.addEventListener('mousedown', (e) => {
-        if (!pendingGarmentPoint) { alert('Click a point on the clothing first!'); return; }
-        
+        if (!pendingGarmentPoint) { notify('Click a point on the clothing first.', 'warn'); return; }
+
         const rect = canvasB.getBoundingClientRect();
         const manPoint = {
             x: e.clientX - rect.left,
             y: e.clientY - rect.top
         };
-        
+
         points.push({
             garment: pendingGarmentPoint,
             mannequin: manPoint
         });
-        
+
         pendingGarmentPoint = null;
         updatePointList();
         draw();
     });
-    
+
     // Undo
     document.addEventListener('keydown', (e) => {
         if (e.key.toLowerCase() === 'u') {
@@ -201,7 +254,7 @@
             draw();
         }
     });
-    
+
     function updatePointList() {
         document.getElementById('pointCount').innerText = points.length;
         const container = document.getElementById('pointsContainer');
@@ -213,24 +266,21 @@
             container.appendChild(div);
         });
     }
-    
+
     // Save
     async function savePackage() {
         const pkgName = document.getElementById('packageName').value.trim();
-        if (!pkgName) { alert('Enter a package name!'); return; }
-        if (!garmentFilename) { alert('Upload a garment first!'); return; }
-        if (points.length < 6) { alert('Set at least 6 points for a stable warp.'); return; }
-        
-        // Convert to scaled coordinates if garment was scaled in canvas
-        // Wait, for simplicity, we assume garment dimensions match canvas or we store raw canvas coords for now.
-        // Actually, the main script needs coordinates relative to the original garment image.
-        // Let's calculate the real coordinates:
+        if (!pkgName) { notify('Enter a package name.', 'warn'); return; }
+        if (!garmentFilename) { notify('Upload a garment first.', 'warn'); return; }
+        if (points.length < 6) { notify('Set at least 6 points for a stable warp.', 'warn'); return; }
+
+        // Convert canvas coordinates back to original garment-image space.
         const scale = Math.min(canvasA.width / garmentImg.width, canvasA.height / garmentImg.height);
         const w = garmentImg.width * scale;
         const h = garmentImg.height * scale;
         const offsetX = (canvasA.width - w) / 2;
         const offsetY = (canvasA.height - h) / 2;
-        
+
         const realPoints = points.map(p => ({
             garment: {
                 x: (p.garment.x - offsetX) / scale,
@@ -241,7 +291,7 @@
                 y: p.mannequin.y
             }
         }));
-        
+
         const payload = {
             package_name: pkgName,
             garment_filename: garmentFilename,
@@ -250,21 +300,24 @@
             sleeve_length: document.getElementById('sleeveLength').value,
             keypoints: realPoints
         };
-        
-        const res = await fetch('/save_package', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        });
-        
-        const result = await res.json();
-        if (result.success) {
-            alert(`Package exported successfully to: ${result.path}`);
-        } else {
-            alert('Failed to save package.');
+
+        try {
+            const res = await fetch('/save_package', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            const result = await res.json();
+            if (result.success) {
+                notify(`Package exported to: ${result.path}`, 'success');
+            } else {
+                notify('Failed to save package.', 'error');
+            }
+        } catch (err) {
+            notify(`Failed to save package: ${err.message}`, 'error');
         }
     }
-    
+
     // Init
     loadMannequin();
 </script>

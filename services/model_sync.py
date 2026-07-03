@@ -17,6 +17,7 @@ SYNC_PROFILES: dict[str, tuple[str, ...]] = {
         "sd15_inpainting",
         "sd15_vae",
         "gfpgan_face_restore",
+        "google_edge_mediapipe",
     ),
     "optional": (),
 }

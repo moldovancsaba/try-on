@@ -28,6 +28,7 @@ from services.worker_contracts import (
     PROCESSING_PROFILE_MOTOGP,
     PROCESSING_PROFILE_SEGMIND_IDM_VTON,
     PROCESSING_PROFILE_FAL_TRYON,
+    PROCESSING_PROFILE_GOOGLE_EDGE_TRYON,
     normalize_job_document,
     normalize_processing_profile,
     normalize_suit_document,
@@ -1440,6 +1441,40 @@ class TryOnQueueWorker:
             raise RuntimeError("local_tryon_api_missing_output")
         return data
 
+    def call_google_edge_tryon_api(self, person_input_path: Path, suit_input_path: Path, output_path: Path, payload: dict[str, Any]) -> dict[str, Any]:
+        payload = dict(payload)
+        local_payload = {
+            "personImagePath": str(person_input_path),
+            "garmentImagePath": str(suit_input_path),
+            "outputImagePath": str(output_path),
+        }
+        for k, v in payload.items():
+            if k not in {"person_image_path", "garment_image_path", "output_image_path", "personImagePath", "garmentImagePath", "outputImagePath"}:
+                local_payload[k] = v
+
+        base_url = self.config.local_tryon_api_url
+        if "/api/tryon/run" in base_url:
+            url = base_url.replace("/api/tryon/run", "/api/local-ai/google-edge/tryon")
+        else:
+            from urllib.parse import urlparse
+            parsed = urlparse(base_url)
+            url = f"{parsed.scheme}://{parsed.netloc}/api/local-ai/google-edge/tryon"
+
+        response = self._call_provider(
+            "local",
+            lambda: requests.post(
+                url,
+                json=local_payload,
+                timeout=self.config.local_tryon_timeout_seconds,
+            ),
+        )
+        if response.status_code >= 400:
+            raise RuntimeError(f"google_edge_tryon_api_failed:{response.status_code}:{response.text[:300]}")
+        data = response.json()
+        if not output_path.exists():
+            raise RuntimeError("google_edge_tryon_api_missing_output")
+        return data
+
     def _coerce_segmind_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
         description = _safe_str(payload.get("garment_des")) or "Sport jersey with logos and text graphics."
         normalized_description = description.strip().rstrip(". ")
@@ -2038,6 +2073,23 @@ class TryOnQueueWorker:
         runtime = payload.get("runtime") or {}
         return feature.get("status") == "ready" and runtime.get("models_ready") is True
 
+    def local_google_edge_api_is_ready(self) -> bool:
+        capabilities_url = self.config.local_tryon_api_url
+        if capabilities_url.endswith("/api/tryon/run"):
+            capabilities_url = capabilities_url[: -len("/api/tryon/run")] + "/api/capabilities"
+        else:
+            capabilities_url = capabilities_url.rstrip("/") + "/api/capabilities"
+        try:
+            response = requests.get(capabilities_url, timeout=10)
+            if response.status_code >= 400:
+                return False
+            payload = response.json()
+        except Exception:
+            return False
+        assets = payload.get("assets") or {}
+        edge_asset = assets.get("google_edge_mediapipe") or {}
+        return edge_asset.get("ready") is True
+
     def upload_to_imgbb(self, image_path: Path) -> dict[str, Any]:
         encoded = base64.b64encode(image_path.read_bytes()).decode("utf-8")
         response = self._call_provider(
@@ -2280,6 +2332,10 @@ class TryOnQueueWorker:
                 _normalize_segmind_aspect(person_input_path)
                 _normalize_segmind_aspect(suit_input_path)
                 api_result = self.call_segmind_tryon_api(person_input_path, suit_input_path, result_path, payload)
+            elif processing_profile == PROCESSING_PROFILE_GOOGLE_EDGE_TRYON:
+                if not self.local_google_edge_api_is_ready():
+                    raise RuntimeError("local_google_edge_api_not_ready")
+                api_result = self.call_google_edge_tryon_api(person_input_path, suit_input_path, result_path, payload)
             elif processing_profile == PROCESSING_PROFILE_FAL_TRYON:
                 try:
                     api_result = self.call_fal_tryon_api(person_input_path, suit_input_path, result_path, payload)

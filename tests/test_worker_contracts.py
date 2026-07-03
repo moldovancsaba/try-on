@@ -5,6 +5,7 @@ import unittest
 from services.worker_contracts import (
     PROCESSING_PROFILE_GENERIC,
     PROCESSING_PROFILE_MOTOGP,
+    PROCESSING_PROFILE_GOOGLE_EDGE_TRYON,
     normalize_job_document,
     normalize_processing_profile,
     validate_job_document,
@@ -18,6 +19,12 @@ class WorkerContractTests(unittest.TestCase):
         self.assertEqual(normalize_processing_profile("motogp_leather_magic"), PROCESSING_PROFILE_MOTOGP)
         self.assertEqual(normalize_processing_profile("motogp-leather-magic"), PROCESSING_PROFILE_MOTOGP)
         self.assertEqual(normalize_processing_profile("unknown"), PROCESSING_PROFILE_GENERIC)
+
+    def test_normalize_processing_profile_supports_google_edge_aliases(self) -> None:
+        self.assertEqual(normalize_processing_profile("google_edge_tryon"), PROCESSING_PROFILE_GOOGLE_EDGE_TRYON)
+        self.assertEqual(normalize_processing_profile("google-edge-tryon"), PROCESSING_PROFILE_GOOGLE_EDGE_TRYON)
+        self.assertEqual(normalize_processing_profile("google_edge"), PROCESSING_PROFILE_GOOGLE_EDGE_TRYON)
+        self.assertEqual(normalize_processing_profile("google-edge"), PROCESSING_PROFILE_GOOGLE_EDGE_TRYON)
 
     def test_validate_job_document_accepts_current_shape(self) -> None:
         errors = validate_job_document(
@@ -78,6 +85,23 @@ class WorkerContractTests(unittest.TestCase):
         self.assertEqual(job["request"]["leatherSuitId"], "suit_legacy")
         self.assertEqual(job["processing"]["attemptCount"], 0)
         self.assertEqual(validate_job_document(job), [])
+
+    def test_validate_job_document_accepts_google_edge_tryon(self) -> None:
+        errors = validate_job_document(
+            {
+                "schemaVersion": 1,
+                "jobId": "job_google_edge",
+                "status": "queued",
+                "stage": "queued",
+                "source": {"submissionId": "sub_1", "imageUrl": "https://example.com/image.png"},
+                "request": {
+                    "leatherSuitId": "suit_1",
+                    "processingProfile": PROCESSING_PROFILE_GOOGLE_EDGE_TRYON,
+                },
+                "processing": {"attemptCount": 0},
+            }
+        )
+        self.assertEqual(errors, [])
 
     def test_validate_suit_document_requires_asset_reference(self) -> None:
         errors = validate_suit_document({"schemaVersion": 1, "leatherSuitId": "suit_1", "active": True})

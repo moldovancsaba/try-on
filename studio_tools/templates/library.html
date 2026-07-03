@@ -11,18 +11,27 @@
 
     <div class="container">
         <h1>Garment Library</h1>
-        <div class="card">
-            <ul class="package-list">
-                {% for package in packages %}
-                <li class="package-item">
-                    <span class="package-name">{{ package }}</span>
-                    <button>View Details</button>
-                </li>
-                {% else %}
-                <li class="point-item">No packages saved yet. Go to Setup Garment to create one.</li>
-                {% endfor %}
-            </ul>
+        {% if packages %}
+        <div class="card-grid" aria-label="Saved garment packages">
+            {% for package in packages %}
+            <article class="data-card">
+                <span class="data-card-title">{{ package }}</span>
+                <span class="data-card-meta">Schema v1 · ready for try-on</span>
+                <div class="data-card-actions">
+                    <a class="btn btn-secondary" href="/packages/{{ package }}/package.json">View Package</a>
+                </div>
+            </article>
+            {% endfor %}
         </div>
+        {% else %}
+        <div class="card">
+            <div class="empty-state">
+                <span class="empty-state-icon" aria-hidden="true">📦</span>
+                <p>No garment packages saved yet.</p>
+                <a class="btn" href="/set-garment">Create one in Setup Garment</a>
+            </div>
+        </div>
+        {% endif %}
     </div>
 </body>
 </html>

@@ -20,7 +20,7 @@
    ============================================================ */
 
 :root {
-    /* GDS 3.4 static bridge.
+    /* GDS 3.9 static bridge (@sovereignsquad/gds 3.9.0).
        The local try-on app is FastAPI/Gradio, so it cannot consume React GDS
        components directly. These variables mirror the GDS vibe-token contract
        and keep local operator pages aligned with the installed GDS baseline. */
@@ -560,6 +560,215 @@ canvas {
 
 
 /* ============================================================
+   13b. GDS COMPONENTS (status, metrics, notices, states)
+   Static mirror of GDS StatusBadge / StateBlock / MetricCard /
+   ResponsiveDataView / InlineAlert semantics for the local surfaces.
+   ============================================================ */
+
+/* Status badges — GDS StatusBadge */
+.badge {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-xs);
+    padding: 2px var(--space-sm);
+    border-radius: 999px;
+    border: 1px solid var(--color-border-hi);
+    font-size: var(--font-size-xs);
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    color: var(--color-text);
+    background: var(--color-input);
+    white-space: nowrap;
+}
+.badge::before {
+    content: "";
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: currentColor;
+    opacity: 0.9;
+}
+.badge--ok      { color: var(--color-success); border-color: color-mix(in srgb, var(--color-success) 45%, var(--color-border)); background: color-mix(in srgb, var(--color-success) 12%, var(--color-panel)); }
+.badge--warn    { color: #dca561;              border-color: color-mix(in srgb, #dca561 45%, var(--color-border));              background: color-mix(in srgb, #dca561 12%, var(--color-panel)); }
+.badge--error   { color: #ff7b72;              border-color: color-mix(in srgb, var(--color-error) 55%, var(--color-border));   background: color-mix(in srgb, var(--color-error) 14%, var(--color-panel)); }
+.badge--info    { color: var(--color-accent-hi); border-color: color-mix(in srgb, var(--color-accent) 45%, var(--color-border)); background: color-mix(in srgb, var(--color-accent) 12%, var(--color-panel)); }
+.badge--neutral { color: var(--color-text-dim); }
+
+.badge-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-sm);
+    align-items: center;
+}
+
+/* StateBlock — degraded/health callout */
+.state-block {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+    padding: var(--space-md);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--color-border);
+    border-left: 4px solid var(--color-text-dim);
+    background: var(--color-panel);
+}
+.state-block[hidden] { display: none; }
+.state-block--ok    { border-left-color: var(--color-success); }
+.state-block--warn  { border-left-color: #dca561; }
+.state-block--error { border-left-color: var(--color-error); }
+.state-block-title { font-weight: 700; color: var(--color-text); }
+.state-block-detail { font-size: var(--font-size-sm); color: var(--color-text-dim); }
+
+/* MetricCard grid — provider scorecard */
+.metric-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: var(--space-md);
+}
+.metric-card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+    padding: var(--space-md);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--color-border);
+    background: color-mix(in srgb, var(--color-panel) 92%, var(--color-accent) 4%);
+}
+.metric-card-label {
+    font-size: var(--font-size-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--color-text-dim);
+    font-weight: 700;
+}
+.metric-card-value { font-size: var(--font-size-lg); font-weight: 700; color: var(--color-text); }
+.metric-card-meta { font-size: var(--font-size-xs); color: var(--color-text-dim); }
+.metric-card-breakdown {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-xs);
+    margin-top: var(--space-xs);
+}
+
+/* Card grid + empty state — GDS ResponsiveDataView */
+.card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: var(--space-md);
+}
+.data-card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+    padding: var(--space-lg);
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--color-border);
+    background: var(--color-panel);
+    transition: border-color 0.2s ease, transform 0.2s ease;
+}
+.data-card:hover { border-color: var(--color-accent); transform: translateY(-2px); }
+.data-card-title { font-weight: 700; color: var(--color-text); word-break: break-word; }
+.data-card-meta { font-size: var(--font-size-xs); color: var(--color-text-dim); }
+.data-card-actions { display: flex; flex-wrap: wrap; gap: var(--space-sm); margin-top: auto; }
+
+.empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    gap: var(--space-sm);
+    padding: var(--space-xl);
+    color: var(--color-text-dim);
+}
+.empty-state-icon { font-size: var(--font-size-xl); }
+
+/* InlineAlert / notices — replaces browser alert() */
+.notice-stack {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+}
+.notice-stack:empty { display: none; }
+.notice {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-sm);
+    padding: var(--space-sm) var(--space-md);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--color-border);
+    border-left: 4px solid var(--color-text-dim);
+    background: var(--color-panel);
+    font-size: var(--font-size-sm);
+    color: var(--color-text);
+}
+.notice--info    { border-left-color: var(--color-accent); }
+.notice--success { border-left-color: var(--color-success); }
+.notice--warn    { border-left-color: #dca561; }
+.notice--error   { border-left-color: var(--color-error); }
+
+/* Dropzone — GDS accessible upload states */
+.dropzone {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-xs);
+    text-align: center;
+    padding: var(--space-lg);
+    min-width: 240px;
+    border: 1.5px dashed var(--color-border-hi);
+    border-radius: var(--radius-md);
+    background: var(--color-input);
+    color: var(--color-text-dim);
+    cursor: pointer;
+    transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease;
+}
+.dropzone:hover,
+.dropzone:focus-within { border-color: var(--color-accent); }
+.dropzone.is-dragover { border-color: var(--color-accent); background: color-mix(in srgb, var(--color-accent) 12%, var(--color-input)); color: var(--color-text); }
+.dropzone.is-selected { border-style: solid; border-color: var(--color-success); color: var(--color-text); }
+.dropzone.is-error    { border-color: var(--color-error); color: #ff7b72; }
+.dropzone-title { font-weight: 700; color: inherit; }
+.dropzone-hint  { font-size: var(--font-size-xs); }
+
+/* Operations banner — model readiness + worker state above Gradio */
+.ops-banner {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-sm);
+    padding: var(--space-sm) var(--space-md);
+    margin-bottom: var(--space-md);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: color-mix(in srgb, var(--color-panel) 90%, var(--color-accent) 6%);
+}
+.ops-banner-label {
+    font-size: var(--font-size-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-weight: 700;
+    color: var(--color-text-dim);
+}
+
+/* Mobile nav toggle — CSS-only checkbox (no JS) */
+.nav-toggle { position: absolute; opacity: 0; pointer-events: none; }
+.nav-toggle-label {
+    display: none;
+    margin-left: auto;
+    font-size: var(--font-size-lg);
+    line-height: 1;
+    color: var(--color-text);
+    background: var(--color-input);
+    border: 1px solid var(--color-border-hi);
+    border-radius: var(--radius-sm);
+    padding: var(--space-xs) var(--space-sm);
+    cursor: pointer;
+}
+
+
+/* ============================================================
    14. GRADIO OVERRIDES
    Force Gradio's internal components to match this design system.
    ============================================================ */
@@ -646,4 +855,25 @@ footer,
         min-height: unset;
         padding: var(--space-lg);
     }
+}
+
+/* Mobile nav collapse — GDS mobile navigation behavior (CSS-only) */
+@media (max-width: 900px) {
+    .nav-toggle-label { display: inline-flex; }
+    .navbar .nav-links { display: none; flex-direction: column; }
+    .navbar .nav-toggle:checked ~ .nav-links { display: flex; }
+}
+
+/* Reduced-motion-safe: honor prefers-reduced-motion for hover/transition */
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        animation-duration: 0.001ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.001ms !important;
+        scroll-behavior: auto !important;
+    }
+    .nav-card:hover,
+    .data-card:hover,
+    button:hover,
+    .btn:hover { transform: none; }
 }

@@ -3,11 +3,11 @@
   "private": true,
   "description": "Local GDS dependency baseline for the Python/FastAPI try-on operator surfaces.",
   "scripts": {
-    "gds:version": "pnpm list @doneisbetter/gds-core @doneisbetter/gds-admin @doneisbetter/gds-theme --depth 0"
+    "gds:version": "pnpm list @sovereignsquad/gds-core @sovereignsquad/gds-admin @sovereignsquad/gds-theme --depth 0"
   },
   "devDependencies": {
-    "@doneisbetter/gds-admin": "3.4.3",
-    "@doneisbetter/gds-core": "3.4.3",
-    "@doneisbetter/gds-theme": "3.4.3"
+    "@sovereignsquad/gds-admin": "3.9.0",
+    "@sovereignsquad/gds-core": "3.9.0",
+    "@sovereignsquad/gds-theme": "3.9.0"
   }
 }

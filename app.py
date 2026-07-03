@@ -1112,6 +1112,7 @@ def build_ui(mode: str = "generic"):
     with gr.Blocks(title=page_title) as demo:
         gr.Markdown(render_capability_markdown(_get_capability_report(), feature_keys=("try_on",)))
         gr.HTML(get_navbar(nav_active))
+        gr.HTML(_ops_banner_html)
         gr.Markdown(f"# {page_title}")
         gr.Markdown(page_subtitle)
 
@@ -1362,18 +1363,58 @@ os.makedirs(STATIC_DIR, exist_ok=True)
 
 fastapi_app.mount("/maps", StaticFiles(directory=MAPS_DIR), name="maps")
 fastapi_app.mount("/uploads", StaticFiles(directory=UPLOADS_DIR), name="uploads")
+fastapi_app.mount("/packages", StaticFiles(directory=PACKAGES_DIR), name="packages")
 fastapi_app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 def get_navbar(active="try-on"):
     with open(os.path.join(TEMPLATES_DIR, "navbar.html"), "r") as f:
         html = f.read()
     # Simple manual replacement for Gradio since we aren't using Jinja here
-    html = html.replace("{{ 'active' if active == 'try-on' else '' }}", "active" if active == "try-on" else "")
-    html = html.replace("{{ 'active' if active == 'motogp' else '' }}", "active" if active == "motogp" else "")
-    html = html.replace("{{ 'active' if active == 'worker-control' else '' }}", "active" if active == "worker-control" else "")
-    html = html.replace("{{ 'active' if active == 'set-garment' else '' }}", "active" if active == "set-garment" else "")
-    html = html.replace("{{ 'active' if active == 'garments' else '' }}", "active" if active == "garments" else "")
+    for key in ("try-on", "motogp", "worker-control", "set-garment", "garments"):
+        html = html.replace(
+            "{{ 'active' if active == '%s' else '' }}" % key,
+            "active" if active == key else "",
+        )
+        html = html.replace(
+            "{{ 'page' if active == '%s' else 'false' }}" % key,
+            "page" if active == key else "false",
+        )
     return html
+
+
+def _ops_banner_html() -> str:
+    """Server-rendered snapshot banner (model readiness + worker state) for Gradio pages.
+
+    ponytail: snapshot at page load, refreshes on reload — no client polling.
+    """
+    if _ERROR:
+        models = ("error", "Models failed to load")
+    elif _READY.is_set():
+        models = ("ok", "Models ready")
+    else:
+        models = ("warn", "Models loading…")
+
+    try:
+        worker = load_worker_status(app_root=_ROOT)
+        if worker.get("enabled") is False:
+            wk = ("warn", "Worker disabled")
+        elif worker.get("workerRunning"):
+            wk = ("info", "Worker active") if _is_runtime_job_active(worker) else ("ok", "Worker idle")
+        else:
+            wk = ("error", "Worker stopped")
+    except Exception:
+        wk = ("neutral", "Worker state unknown")
+
+    def _b(pair):
+        variant, label = pair
+        return f'<span class="badge badge--{variant}">{label}</span>'
+
+    return (
+        '<div class="ops-banner" role="status">'
+        '<span class="ops-banner-label">Operations</span>'
+        f"{_b(models)}{_b(wk)}"
+        "</div>"
+    )
 
 from fastapi.templating import Jinja2Templates
 
@@ -1844,7 +1885,7 @@ if "fastapi_app" in globals():
         if provider_filter and provider_filter not in {SETUP_PROVIDER_LOCAL, SETUP_PROVIDER_ONLINE}:
             raise HTTPException(status_code=400, detail="provider must be one of: local, online")
         client, db = _get_tryon_db()
-        if not db:
+        if db is None:
             raise HTTPException(status_code=503, detail="Try-on MongoDB is not configured.")
         setup_collection_name, _ = _tryon_collection_names()
         local_setups = load_local_setups(_ROOT)
@@ -1898,7 +1939,7 @@ if "fastapi_app" in globals():
             raise HTTPException(status_code=400, detail="cameraId is required.")
 
         client, db = _get_tryon_db()
-        if not db:
+        if db is None:
             raise HTTPException(status_code=503, detail="Try-on MongoDB is not configured.")
         setup_collection_name, preference_collection_name = _tryon_collection_names()
         local_setups = load_local_setups(_ROOT)
@@ -1982,6 +2023,14 @@ if "fastapi_app" in globals():
     @fastapi_app.post("/api/local-ai/quality/tryon-gate")
     async def local_ai_tryon_gate_api(payload: dict[str, Any]):
         return JSONResponse(run_local_ai_service(_ROOT, "tryon_quality_gate", payload))
+
+    @fastapi_app.post("/api/local-ai/google-edge/analyze")
+    async def local_ai_google_edge_api(payload: dict[str, Any]):
+        return JSONResponse(run_local_ai_service(_ROOT, "google_edge_analyzer", payload))
+
+    @fastapi_app.post("/api/local-ai/google-edge/tryon")
+    async def local_ai_google_edge_tryon_api(payload: dict[str, Any]):
+        return JSONResponse(run_local_ai_service(_ROOT, "google_edge_tryon", payload))
 
     @fastapi_app.post("/api/local-ai/editing/inpaint")
     async def local_ai_inpaint_api(payload: dict[str, Any]):
@@ -2307,7 +2356,21 @@ if __name__ == "__main__":
     )
 
     # Minimal structural CSS only — no colours, those are owned by gradio_theme.
-    gradio_extra_css = "footer, .built-with-gradio, .pose-state-hidden { display: none !important; }"
+    # ponytail: the ops-banner/badge rules are inlined here (literal palette) because
+    # the Gradio pages don't load global.css, so its CSS variables aren't available.
+    gradio_extra_css = (
+        "footer, .built-with-gradio, .pose-state-hidden { display: none !important; }"
+        ".ops-banner{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px 16px;"
+        "margin-bottom:16px;border:1px solid #2a2a37;border-radius:8px;background:#181820;}"
+        ".ops-banner-label{font-size:12px;text-transform:uppercase;letter-spacing:.5px;"
+        "font-weight:700;color:#727169;}"
+        ".badge{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:999px;"
+        "border:1px solid #3a3a4a;font-size:12px;font-weight:700;letter-spacing:.5px;"
+        "text-transform:uppercase;color:#dcd7ba;background:#1f1f28;white-space:nowrap;}"
+        ".badge::before{content:'';width:8px;height:8px;border-radius:50%;background:currentColor;}"
+        ".badge--ok{color:#98bb6c;}.badge--warn{color:#dca561;}.badge--error{color:#e82424;}"
+        ".badge--info{color:#b4befe;}.badge--neutral{color:#727169;}"
+    )
 
     app = gr.mount_gradio_app(fastapi_app, demo, path="/try-on", theme=gradio_theme, css=gradio_extra_css)
     app = gr.mount_gradio_app(app, motogp_demo, path="/motogp-leather-magic", theme=gradio_theme, css=gradio_extra_css)

@@ -13,11 +13,13 @@ PROCESSING_PROFILE_GENERIC = "generic"
 PROCESSING_PROFILE_MOTOGP = "motogp_leather_magic"
 PROCESSING_PROFILE_SEGMIND_IDM_VTON = "segmind_idm_vton"
 PROCESSING_PROFILE_FAL_TRYON = "fal_tryon"
+PROCESSING_PROFILE_GOOGLE_EDGE_TRYON = "google_edge_tryon"
 PROCESSING_PROFILES = {
     PROCESSING_PROFILE_GENERIC,
     PROCESSING_PROFILE_MOTOGP,
     PROCESSING_PROFILE_SEGMIND_IDM_VTON,
     PROCESSING_PROFILE_FAL_TRYON,
+    PROCESSING_PROFILE_GOOGLE_EDGE_TRYON,
 }
 JOB_STATUSES = {
     "queued",
@@ -65,6 +67,8 @@ def normalize_processing_profile(value: str | None) -> str:
         return PROCESSING_PROFILE_SEGMIND_IDM_VTON
     if raw in {"fal", "fal_tryon", "fal-fashn", "fashn", "fal-tryon", "fal_tryon", "fashn_tryon"}:
         return PROCESSING_PROFILE_FAL_TRYON
+    if raw in {"google_edge_tryon", "google-edge-tryon", "google_edge", "google-edge"}:
+        return PROCESSING_PROFILE_GOOGLE_EDGE_TRYON
     return PROCESSING_PROFILE_GENERIC
 
 
