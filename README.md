@@ -834,6 +834,23 @@ High-value application files:
 
 - The app is local-first, not stateless or multi-user.
 - The runtime is optimized around Apple Silicon and local desktop use, not cloud deployment.
+- **Throughput is memory-bound on a 16 GB machine.** A 768x1024 / 50-step render measured
+  ~52 minutes with the machine idle, and 92 minutes with a second image model resident,
+  against the ~2-2.5 s/step the silicon is capable of. The gap is paging, not compute.
+  Keep other model servers unloaded while rendering, and prefer ~28 steps.
+- No larger try-on model is viable here: FLUX.2 klein 4B measured a 17.94 GB peak on a
+  16 GB machine. See `docs/LOCAL_TRYON_MODEL_RESEARCH.md` for the survey and numbers.
+
+## Model Attribution
+
+This app builds on work released under non-commercial terms and passes on their
+obligations:
+
+- [CatVTON](https://huggingface.co/zhengchong/CatVTON) - CC BY-NC-SA 4.0
+- Stable Diffusion 1.5 inpainting - see the upstream model card for its terms
+- [GFPGAN](https://github.com/TencentARC/GFPGAN) - optional face restoration
+
+Derivative model weights, if ever produced, must carry the same licence as their source.
 
 ## Upstream Reference
 

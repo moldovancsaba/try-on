@@ -1,5 +1,28 @@
 # Release Notes
 
+## Local model research and performance findings - 2026-08
+
+Investigated whether a newer locally-hostable model could replace CatVTON/SD1.5, and
+measured the current pipeline on the production machine for the first time.
+
+Findings:
+
+- Rendering is **memory-bound, not compute-bound**. Measured ~62 s/step against the
+  ~2-2.5 s/step this hardware supports; the weights do not stay resident and re-fault
+  from swap. A 50-step render takes ~52 minutes idle, 92 minutes under contention.
+- **No larger model fits.** FLUX.2 klein 4B (Apache 2.0) peaked at 17.94 GB on a 16 GB
+  machine. Qwen-Image-Edit needs 32 GB+. The Apache-licensed candidates have no virtual
+  try-on weights, and producing them needs a GPU this project does not have.
+- mflux's `in-context-catvton` is **not** a runtime swap for the current model: it loads
+  FLUX.1-Fill-dev (12B, non-commercial).
+- Documented the licence position: CatVTON weights are CC BY-NC-SA 4.0, and the BY term
+  requires attribution that the app was not carrying. Added to README.
+
+Recommended operating changes: keep other model servers unloaded during renders, and cut
+steps from 50-84 to ~28.
+
+Detail and numbers: `docs/LOCAL_TRYON_MODEL_RESEARCH.md`.
+
 ## Documentation and comment audit — 2026-08
 
 Two audit passes over every first-party comment, the second scored against Google's

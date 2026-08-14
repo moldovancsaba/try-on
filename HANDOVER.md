@@ -15,6 +15,22 @@ Snapshot of where the repo is for the next person picking it up.
 
 ## Recently landed
 
+### Local model research (2026-08-14)
+
+Full findings: [docs/LOCAL_TRYON_MODEL_RESEARCH.md](docs/LOCAL_TRYON_MODEL_RESEARCH.md).
+
+The headline is that **throughput here is memory-bound, not compute-bound, and no larger
+model is viable.** A 50-step render measured ~52 minutes idle and 92 minutes with a second
+image model resident, against ~2-2.5 s/step the M4 can actually do. The app's weights do
+not stay resident, so it re-faults from swap every step.
+
+Do not spend effort on model replacement. FLUX.2 klein 4B was tested and peaked at
+17.94 GB on this 16 GB machine; mflux's CatVTON path turns out to need FLUX.1-Fill-dev
+(12B, non-commercial), so it is not the cheap runtime swap it appears to be. The cheap
+wins are keeping other model servers (Ollama was holding 3.6 GB) unloaded during renders
+and cutting steps from 50-84 to ~28.
+
+
 ### Google AI Edge / MediaPipe lane
 
 Landed and committed — the previous handover listed this as in-flight WIP, which was
