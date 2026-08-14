@@ -286,6 +286,18 @@ def brand_safety_analyzer(app_root: Path, payload: dict[str, Any]) -> dict[str, 
 
 
 def tryon_quality_gate(app_root: Path, payload: dict[str, Any]) -> dict[str, Any]:
+    """Score a finished try-on render and recommend accept / review / rerun / reject.
+
+    Three layers, worst outcome wins: cheap image metrics, the brand-safety comparison
+    against the source, and — when the MediaPipe pack is present — pose validation of
+    the source photo, which catches "the render is fine but the input was never going
+    to work".
+
+    Pose validation is best-effort by design: any failure there is logged and skipped
+    rather than raised, so a missing model pack degrades the gate instead of breaking
+    it. That also means a silent skip looks identical to a pass in the result, so check
+    `checks.googleEdgeAnalysis` for null before trusting that a pose was validated.
+    """
     output = _open_image(_resolve_input_path(payload["outputImagePath"]))
     metrics = _image_metrics(output)
     failures = []
@@ -305,7 +317,12 @@ def tryon_quality_gate(app_root: Path, payload: dict[str, Any]) -> dict[str, Any
     edge_analysis = None
     if payload.get("sourceImagePath"):
         try:
-            report = evaluate_model_packs(app_root)
+            # Readiness is vault-relative, so this must be the models root: passing
+            # app_root here made the pack read "unavailable" and silently skipped
+            # pose validation for every job.
+            from model_paths import get_models_root
+
+            report = evaluate_model_packs(get_models_root())
             if report["modelPacks"].get("google_edge_mediapipe", {}).get("status") == "ready":
                 edge_analysis = google_edge_analyzer(app_root, {"sourceImagePath": payload["sourceImagePath"]})
                 if edge_analysis["status"] == "fail":
@@ -321,6 +338,22 @@ def tryon_quality_gate(app_root: Path, payload: dict[str, Any]) -> dict[str, Any
 
 
 def google_edge_analyzer(app_root: Path, payload: dict[str, Any]) -> dict[str, Any]:
+    """Judge whether a source photo is a usable try-on subject, using MediaPipe landmarks.
+
+    Screens for the poses that make CatVTON produce garbage — raised arms, a strongly
+    tilted or turned body, no detectable person — so a bad input can be rejected before
+    a multi-minute render rather than after it. Checks return "warn" rather than "fail"
+    where the render usually survives (shoulder tilt), and the thresholds are empirical,
+    normalized to image size: landmark coordinates are 0..1, so 0.1 of shoulder tilt is
+    a tenth of image height, not pixels.
+
+    Landmark indices are MediaPipe Pose's fixed layout: 11/12 shoulders, 13/14 elbows,
+    15/16 wrists, 23/24 hips.
+
+    Raises ImportError if mediapipe is absent and FileNotFoundError if the .task model
+    files are missing from the vault — both are provisioning faults, not bad input, so
+    they are not folded into the pass/fail result.
+    """
     job_id = payload.get("jobId") or f"edge-{int(time.time())}"
     source_path = _resolve_input_path(payload["sourceImagePath"])
 
@@ -469,6 +502,19 @@ def google_edge_analyzer(app_root: Path, payload: dict[str, Any]) -> dict[str, A
 
 
 def google_edge_tryon(app_root: Path, payload: dict[str, Any]) -> dict[str, Any]:
+    """Composite the garment onto the person by pose landmarks — a preview, not a render.
+
+    No diffusion: the garment is scaled and placed from the shoulder width and torso
+    height MediaPipe reports, which takes a second instead of minutes. Use it for
+    instant framing feedback (does the garment land in the right place?), never as a
+    substitute for the CatVTON path — it cannot drape, shade, or occlude.
+
+    The google_edge_* payload keys nudge the placement (width/height scale, x/y offset,
+    tilt) and exist because landmark-derived geometry is systematically off for some
+    garment cuts; they are the calibration knob, not tuning for its own sake.
+
+    Raises ValueError("no_body_pose_detected") when there is no person to place against.
+    """
     job_id = payload.get("jobId") or f"tryon-{int(time.time())}"
     person_path = _resolve_input_path(payload["personImagePath"])
     garment_path = _resolve_input_path(payload["garmentImagePath"])

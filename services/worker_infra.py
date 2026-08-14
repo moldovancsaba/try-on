@@ -1,3 +1,13 @@
+"""Queue health, provider circuit breaking, and failure classification for the worker.
+
+Everything here is advisory state the worker consults before and after each job:
+whether a provider is in cooldown, whether the queue is under backpressure, and which
+taxonomy bucket a failure belongs in. State lives in JSON files under `.runtime/`
+rather than Atlas, because it describes this machine, not the shared queue.
+
+Operator-facing behavior and the CLI over it: docs/TRYON_CRITICAL_INFRASTRUCTURE.md.
+"""
+
 from __future__ import annotations
 
 import json
@@ -77,6 +87,13 @@ class ProviderPolicy:
 
 
 def classify_failure_category(code: str | None, message: str | None) -> str:
+    """Return the FAILURE_TAXONOMY key for a failure, "unknown" if nothing matches.
+
+    Substring matching over the code and message together, first match wins, so the
+    order of the checks is the priority order: a timeout during an upload classifies
+    as a timeout, not an upload error. This drives the operator's recommended action,
+    not retry behavior — retryability is decided by classify_failure in the worker.
+    """
     text = f"{code or ''} {message or ''}".lower()
     if "timeout" in text or "timed out" in text or "read timeout" in text:
         return "timeout"
@@ -96,6 +113,12 @@ def classify_failure_category(code: str | None, message: str | None) -> str:
 
 
 def failure_note(category: str, message: str | None = None) -> dict[str, str]:
+    """Return the operator-facing note stored on a failed job.
+
+    The message is truncated at the first "?" and to 240 characters before being
+    persisted: provider errors routinely quote signed asset URLs, and the query string
+    is where the credentials live. Keep that split if you touch this.
+    """
     spec = FAILURE_TAXONOMY.get(category) or FAILURE_TAXONOMY["unknown"]
     safe_message = str(message or "").split("?", 1)[0][:240]
     return {
@@ -107,6 +130,17 @@ def failure_note(category: str, message: str | None = None) -> dict[str, str]:
 
 
 class ProviderCircuitBreaker:
+    """Per-provider health tracking that opens a circuit after repeated failures.
+
+    Counts requests, failures, timeouts, and slow calls per provider, and once a
+    provider hits its policy's failure_threshold consecutive failures it is refused
+    until the cooldown expires. State persists to `state_path` so a worker restart
+    does not clear a circuit that a still-broken provider earned.
+
+    Not thread-safe, and not shared between machines: each worker breaks its own
+    circuits from its own observations.
+    """
+
     def __init__(self, state_path: Path, policies: dict[str, ProviderPolicy]):
         self.state_path = state_path
         self.policies = policies
@@ -224,6 +258,16 @@ class ProviderCircuitBreaker:
 
 
 def summarize_queue(jobs: Any, *, policy: QueueBackpressurePolicy) -> dict[str, Any]:
+    """Return queue depth by status plus whether backpressure should hold off claiming.
+
+    "Ready" means queued or retry_wait with no future nextAttemptAt — the jobs that
+    could be claimed right now, which is a smaller number than the queued count and
+    the one worth alarming on. Backpressure trips on ready depth or on the age of the
+    oldest ready job; the age check is what catches a queue that is small but stuck.
+
+    Runs four count_documents plus a find_one against Atlas, so call it once per loop
+    rather than per job.
+    """
     statuses = ["queued", "claimed", "processing", "uploading_result", "notifying_camera", "retry_wait", "done", "failed"]
     counts = {status: int(jobs.count_documents({"status": status})) for status in statuses}
     ready_filter = {
@@ -260,6 +304,16 @@ def summarize_queue(jobs: Any, *, policy: QueueBackpressurePolicy) -> dict[str, 
 
 
 def reconcile_jobs(jobs: Any, *, limit: int = 200) -> dict[str, Any]:
+    """Return jobs whose Atlas state is internally inconsistent, for operator review.
+
+    Finds the four ways the publish→notify→done sequence can end up half-applied: a
+    done job with no public url, an uploaded job Camera was never told about, an
+    active job whose lease expired, and a failed job with no taxonomy category.
+
+    Only the middle two are marked `safeReplay` — replaying them re-sends a callback
+    that Camera de-duplicates. The other two need a human, because replaying them
+    would either fabricate a result or fight a live worker. Read-only.
+    """
     findings: list[dict[str, Any]] = []
     selectors = [
         ("done_missing_public_url", {"status": "done", "$or": [{"result.publicResultUrl": {"$exists": False}}, {"result.publicResultUrl": None}, {"result.publicResultUrl": ""}]}),

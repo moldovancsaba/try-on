@@ -903,6 +903,13 @@ CAMERA_CALLBACK_DAILY_LIMIT=5000
 
 Maintenance rule: if queue status, provider metrics, failure taxonomy, reconciliation findings, or worker heartbeat fields change, update `docs/TRYON_ATLAS_CONTRACT.md` and `docs/TRYON_CRITICAL_INFRASTRUCTURE.md` in the same commit.
 
+## Code Comments
+
+What a comment here is for, when a docstring is required, and how to check the tree for
+comments that no longer match the code: `docs/CODE_COMMENT_STANDARD.md`. It also lists
+the code paths that are deliberately dead — disabled by hard overrides, kept on purpose,
+and labelled in place.
+
 ## Local AI Services
 
 The app now includes a zero-external-cost local image service family.

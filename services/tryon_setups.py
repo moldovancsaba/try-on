@@ -1,3 +1,14 @@
+"""Load try-on presets ("setups") from the local catalog.
+
+A setup is a named bundle of render parameters plus the provider that should run them.
+The local catalog (.config/tryon_setups.json) holds the full config payload and is the
+source of truth; Atlas carries only metadata so Camera can list and select setups.
+
+TRYON_SETUP_FIELD_ALLOWLIST is the security boundary here: catalog entries become
+kwargs for the render path, so unknown keys are dropped rather than passed through.
+Adding a render parameter means adding it to that set as well.
+"""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -107,6 +118,17 @@ def _coerce_setup_entry(entry: dict[str, Any], *, source_path: Path) -> dict[str
 
 
 def load_local_setups(app_root: Path, catalog_path: str | None = None) -> dict[str, dict[str, Any]]:
+    """Return the setup catalog keyed by setupId, empty if it cannot be read.
+
+    Path precedence: explicit argument, then $TRYON_SETUP_CATALOG_PATH, then
+    .config/tryon_setups.json relative to app_root.
+
+    Every failure mode is silent and returns {} — missing file, malformed JSON, wrong
+    top-level type, entries without a setupId. That is deliberate: a broken catalog
+    must not stop the app or worker from starting, and callers fall back to the
+    default setup. It also means a typo in the catalog looks like an empty list rather
+    than an error, so check the file directly when a setup goes missing.
+    """
     path_value = _normalize_text(catalog_path) or _normalize_text(os.getenv(SETUP_CATALOG_ENV)) or DEFAULT_SETUP_CATALOG_PATH
     catalog_path_obj = Path(path_value)
     if not catalog_path_obj.is_absolute():

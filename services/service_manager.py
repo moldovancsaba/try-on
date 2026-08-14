@@ -1,3 +1,17 @@
+"""Inspect and control the two launchd services from inside the app.
+
+Backs the Worker Control page: it reports whether `com.tryon.app-server` and
+`com.tryon.camera-worker` are up, and lets an operator start or restart them without
+a terminal. Liveness is checked two ways — a pgrep for the process and `launchctl
+print` — because either can be misleading alone: launchd reports a service loaded
+while its process is crash-looping, and a manually launched process has no launchd
+state at all.
+
+Deliberately offers no stop action. The services are meant to be always-on, and the
+worker is stopped by disabling it through worker settings, which lets it finish the
+job in flight instead of killing it mid-render.
+"""
+
 from __future__ import annotations
 
 import os
@@ -194,6 +208,16 @@ def _launch_agent_status(service: ManagedService) -> dict[str, Any]:
 
 
 def get_managed_services_status(app_root: Path | None = None, *, current_process_is_app: bool = False) -> dict[str, Any]:
+    """Report pid, uptime, and launchd state for each managed service.
+
+    A service counts as running if either the pgrep or launchd check says so, which
+    keeps a hand-started process from being reported as down. `healthy` currently just
+    mirrors `running` — there is no deeper probe behind it yet.
+
+    Pass current_process_is_app=True when calling from inside the app server so it
+    reports its own pid instead of pgrep-ing for itself. Shells out several times per
+    call; it is cheap but not free, so avoid it in a hot loop.
+    """
     root = _repo_root(app_root)
     services: dict[str, Any] = {}
     for key, service in _service_definitions(root).items():
@@ -216,6 +240,20 @@ def get_managed_services_status(app_root: Path | None = None, *, current_process
 
 
 def perform_service_action(target: str, action: str, app_root: Path | None = None) -> dict[str, Any]:
+    """Apply `action` to a managed service and return an acceptance receipt.
+
+    Actions: "start" and "restart" (identical — both reinstall the plist, reload it,
+    and kickstart, which is idempotent whether or not the service was up), and
+    "run_now" for a single one-shot pass, available only to the worker.
+
+    Returns as soon as launchctl accepts the request, not when the service is
+    serving — the receipt is an acknowledgement, so poll
+    get_managed_services_status for the outcome. Raises ValueError for an unknown
+    target or action, RuntimeError if launchctl rejects the request.
+
+    Restarting the app service from inside the app kills the process serving that
+    request; the reply is lost even though the restart succeeds.
+    """
     root = _repo_root(app_root)
     service = _service_definitions(root).get(target)
     if not service:

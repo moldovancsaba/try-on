@@ -1,4 +1,13 @@
 #!/usr/bin/env python3
+"""Audit the shared model vault and optionally write its manifest.
+
+Reports what the vault holds against the ASSETS contract, so a machine's vault can be
+checked without starting the app. `--write-manifest` records the result as
+manifest.json in the vault root, which is what install.sh leaves behind as the
+provisioning receipt. `--dry-run` prints intended mutations and changes nothing.
+
+Read-only unless --write-manifest or --migrate-florence is passed.
+"""
 from __future__ import annotations
 
 import argparse

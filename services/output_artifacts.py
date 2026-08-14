@@ -1,3 +1,11 @@
+"""Sidecar metadata written next to each generated image.
+
+Records what produced a render — parameters, quality verdict, and the capability state
+at the time — as `<output>.png.json`. The point is after-the-fact answerability: when
+someone asks why one output looks different, the sidecar says which seed, sampler, and
+model readiness produced it, without needing the job to still exist in Atlas.
+"""
+
 from __future__ import annotations
 
 import json
@@ -27,6 +35,12 @@ def build_output_metadata(
 
 
 def write_sidecar_metadata(output_path: Path, metadata: dict[str, Any]) -> Path:
+    """Write `metadata` beside the output and return the sidecar path.
+
+    The suffix is appended rather than replaced — `render.png` gets
+    `render.png.json` — so the sidecar can never collide with a differently
+    formatted render of the same name. Overwrites silently.
+    """
     output_path = Path(output_path)
     sidecar_path = output_path.with_suffix(f"{output_path.suffix}.json")
     with sidecar_path.open("w", encoding="utf-8") as handle:

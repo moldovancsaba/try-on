@@ -1,3 +1,14 @@
+"""The worker's local status file and event log under `.runtime/`.
+
+This is how the worker process tells the app process what it is doing — there is no
+IPC between them, so the app reads these files to render Worker Control and the ops
+banner. Atlas remains the source of truth for job state; these files describe only
+this machine and are safe to delete (they are rebuilt on the next loop).
+
+The event log is append-only NDJSON and is never rotated here, so it grows without
+bound; `read_recent_worker_events` reads the whole file to return the tail.
+"""
+
 from __future__ import annotations
 
 import json
@@ -29,6 +40,13 @@ def write_worker_status(payload: dict[str, Any], app_root: Path | None = None) -
 
 
 def load_worker_status(app_root: Path | None = None) -> dict[str, Any]:
+    """Return the worker's last published status, or a stopped-looking default.
+
+    A missing or unparseable file yields workerRunning=False with null fields rather
+    than raising, so the UI degrades to "stopped" instead of erroring. Note that this
+    reports what the worker last *wrote*: a worker killed hard leaves its final status
+    behind, which is why the app cross-checks liveness with the launchd service state.
+    """
     path = get_worker_status_path(app_root)
     if not path.exists():
         return {

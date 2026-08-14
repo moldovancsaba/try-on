@@ -662,6 +662,26 @@ def _inference(person_img, cloth_img, category, sleeve_length, pant_length, reso
 
 
 def _run_inference_locked(person_img, cloth_img, category, sleeve_length, pant_length, resolution, num_steps, guidance, seed, show_mask, mask_sharpness, mask_padding, detail_boost, face_restore_strength, preserve_head, lock_seed, use_vae_hf, sampler_name, bg_plate, composite_strength, enable_deep_texture, warp_strength, progress=gr.Progress()):
+    """Run one try-on render, yielding progress tuples until the final image.
+
+    A generator, not a function: it yields
+    `(image, mask, status_text, seed_update, button_update)` many times — live latent
+    previews during diffusion, then the finished image — because Gradio streams from it
+    and the button stays disabled until the last yield. Callers that want only the
+    result (the API path) drain it and keep the last tuple.
+
+    Order matters and each stage depends on the previous: parse the body (SCHP +
+    DensePose) -> build and constrain the edit mask -> diffuse -> finish (face restore,
+    sharpen, composite back). The masking stage is where most output quality is won or
+    lost; diffusion just fills what the mask allows.
+
+    Yields an error tuple and returns early rather than raising, for anything the user
+    can act on: models still loading, missing assets, no person or garment image, a
+    failed diffusion step, or output that fails the quality contract. Callers must
+    check for a None image.
+
+    Assumes the caller holds the try-on lock — it does not take one itself.
+    """
     import torch
     import random
     import json
@@ -1044,6 +1064,18 @@ def load_settings():
     return load_saved_settings(app_root=_ROOT, models_root=_MODELS_ROOT)
 
 def build_ui(mode: str = "generic"):
+    """Build the Gradio Blocks surface for one page and return it unlaunched.
+
+    Called twice at startup — `mode="generic"` mounts at /try-on with the controls
+    exposed, `mode="motogp"` mounts at /motogp-leather-magic with them locked to the
+    tuned leather-suit values. Same render path underneath; the mode only decides which
+    knobs the operator can move, and the MotoGP wrapper overrides its inputs before
+    calling _inference regardless of what the components hold.
+
+    Component visibility also depends on capability state at build time (face restore
+    hides when GFPGAN is unavailable), so the UI is built after models load, and a
+    vault change needs an app restart to show up.
+    """
     s = load_settings()
     motogp_mode = mode == "motogp"
     nav_active = "motogp" if motogp_mode else "try-on"
@@ -1735,6 +1767,17 @@ def _build_worker_status_report() -> dict[str, object]:
 
 
 def _run_tryon_api_job(payload: TryOnApiRequest) -> dict[str, object]:
+    """Run a try-on from an API request and return the response body.
+
+    Filesystem in, filesystem out: the caller supplies readable input paths and a
+    writable output path, and no image bytes cross the API boundary. That is what lets
+    the queue worker hand off a multi-hundred-megabyte job over localhost cheaply.
+
+    Applies the processing profile first (which can override the caller's parameters —
+    the MotoGP profile in particular), then drains the render generator and keeps the
+    final frame. Raises HTTPException: 503 while models load, 500 on a load error or a
+    render that produced nothing, 400 for missing inputs.
+    """
     from PIL import Image, ImageOps
 
     payload = _apply_processing_profile(payload)
@@ -1895,6 +1938,17 @@ if "fastapi_app" in globals():
 
     @fastapi_app.get("/api/tryon/setups")
     async def list_tryon_setups(cameraId: str | None = None, provider: str | None = None):
+        """List selectable setups for a camera, newest local catalog state first.
+
+        Pushes the local catalog into Atlas before reading it back, so the local file
+        stays the source of truth for setup config while Camera reads metadata from
+        Atlas. That write happens on every call — this endpoint is not read-only.
+
+        Without `cameraId` only globally-scoped setups are returned; with one, that
+        camera's setups are included too. Sort order is the selection order Camera
+        shows: default first, then camera-specific, then rank, then name. `provider`
+        filters to local or online ("cloud" is accepted as an alias).
+        """
         camera_id = _normalize_opt_text(cameraId)
         provider_filter = _normalize_opt_text(provider)
         if provider_filter == "cloud":
@@ -2142,6 +2196,17 @@ if "fastapi_app" in globals():
 
     @fastapi_app.post("/api/worker/jobs/{job_id}/retry")
     async def worker_job_retry_api(job_id: str, payload: RetryWorkerJobRequest):
+        """Re-queue a finished or failed job, clearing its error and lease state.
+
+        Refuses (409) any job that is currently being worked — checked twice, against
+        the local worker's runtime status and against the job's own status in Atlas,
+        because a job claimed by another machine is invisible to the first check.
+        Retrying a live job would let two workers publish results for one submission.
+
+        `target` picks the landing status: "queued" for immediate pickup, or
+        "retry_wait" with delayMinutes (0-1440) to hold it back. Attempt count is left
+        alone — an operator retry does not refill the automatic retry budget.
+        """
         runtime_state = load_worker_status(app_root=_ROOT)
         if str(runtime_state.get("currentJobId") or "") == job_id and _is_runtime_job_active(runtime_state):
             raise HTTPException(

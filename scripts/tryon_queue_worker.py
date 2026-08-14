@@ -177,6 +177,22 @@ def load_env_file(path: Path) -> None:
 
 
 def load_config() -> WorkerConfig:
+    """Build the worker config from .env files, environment, and worker settings.
+
+    Precedence: real environment first, then `.env.tryon-worker`, then `.env.local` —
+    load_env_file never overwrites a variable that is already set, so an operator can
+    override the file for one run without editing it.
+
+    Two settings deliberately do not come from the environment: `pollIntervalSeconds`
+    and `enabled` are read from the worker settings store so they can be changed live
+    from Worker Control. `TRYON_POLL_INTERVAL_SECONDS` appears in the env example but
+    is not read.
+
+    Raises RuntimeError for the five values with no safe default — Mongo URI and db
+    name, the Camera completion url and secret, and the ImgBB key — because a worker
+    missing any of them would claim jobs it cannot finish. Provider keys are optional:
+    absent ones simply make that provider unavailable.
+    """
     repo_root = Path(__file__).resolve().parent.parent
     load_env_file(repo_root / ".env.tryon-worker")
     load_env_file(repo_root / ".env.local")
@@ -1154,6 +1170,20 @@ class TryOnQueueWorker:
         self.update_runtime_status(lastHeartbeatAt=now)
 
     def schedule_retry_or_failure(self, job: dict[str, Any], code: str, message: str, details: str | None = None) -> str:
+        """Record a job failure and return the status it landed in: "retry_wait" or "failed".
+
+        Only `transient_runtime_error` is ever retried — every other code means the job
+        cannot succeed as written, so it fails terminally on the first attempt rather
+        than burning the retry budget.
+
+        Timeouts get a tighter rule than the general max_attempts budget: two timeouts
+        and the job is left failed under `timeout_retry_limit_reached`, because a job
+        that times out twice is usually too large for this machine and will keep
+        occupying the single worker slot.
+
+        Always writes an error category and operatorNote so Worker Control can explain
+        the failure without the operator reading logs.
+        """
         attempt_count = int(job.get("processing", {}).get("attemptCount", 0))
         if code != "transient_runtime_error":
             now = now_iso()
@@ -1902,6 +1932,18 @@ class TryOnQueueWorker:
         output_path: Path,
         payload: dict[str, Any],
     ) -> dict[str, Any]:
+        """Render through fal's queue API and write the result to `output_path`.
+
+        fal takes image URLs, not uploads, so both inputs are pushed through ImgBB
+        first — meaning a fal render costs two extra public uploads and fails if ImgBB
+        is down. The submit call uses a deliberately short timeout (10-30s) because it
+        only enqueues; the long wait happens in _wait_for_fal_result against the status
+        url, which is what the full fal timeout applies to.
+
+        Raises RuntimeError with a `fal_*` code on any failure. Those codes are what
+        _is_fal_fallback_candidate matches to decide whether to re-route the job to
+        another provider.
+        """
         if not self.config.fal_key:
             raise RuntimeError("fal_api_key_missing")
         if not self.config.fal_base_url or not self.config.fal_tryon_model:
@@ -2050,6 +2092,16 @@ class TryOnQueueWorker:
         output_path: Path,
         payload: dict[str, Any],
     ) -> dict[str, Any]:
+        """Render through Segmind IDM-VTON and write the result to `output_path`.
+
+        Like the fal path, inputs go through ImgBB first because the provider takes
+        URLs. Transparent-PNG garments get special handling: the category is forced to
+        "dresses" with cropping and mask-only off, and the prompt gains an explicit
+        alpha-edge instruction, because IDM-VTON otherwise paints into the transparent
+        region and leaves a halo. That prompt text is load-bearing, not decoration.
+
+        Raises RuntimeError with a `segmind_*` code on failure.
+        """
         if not self.config.segmind_api_key:
             raise RuntimeError("segmind_api_key_missing")
 
@@ -2176,6 +2228,17 @@ class TryOnQueueWorker:
         processing_profile: str,
         setup_revision: str | None = None,
     ) -> None:
+        """POST the finished result to Camera, trying each id/payload shape in turn.
+
+        Stops at the first response under 400. A "source submission is invalid" body
+        means the id was wrong, so it moves to the next candidate; any other
+        non-retryable status stops the loop, since re-posting the same rejected payload
+        under a different id would not help.
+
+        Raises RuntimeError("camera_completion_failed:<status>:<body>") when every
+        variant is exhausted — the caller turns that into a retry, and the job is not
+        marked done until this succeeds.
+        """
         source_payload = source or {}
         normalized_submission_id = (submission_id or "").strip()
         payload_variants = self._build_camera_completion_payload_variants(
@@ -2223,6 +2286,26 @@ class TryOnQueueWorker:
         raise RuntimeError(f"camera_completion_failed:{last_status}:{last_body[:300]}")
 
     def process_job(self, job: dict[str, Any]) -> None:
+        """Take one claimed job all the way to done, or to retry_wait / failed.
+
+        The sequence is validate -> resolve setup -> download inputs -> render ->
+        publish image -> notify Camera -> mark done, and the last three steps are
+        ordered that way on purpose: `done` is written only after Camera has
+        acknowledged, so a crash mid-sequence leaves a job that reconciliation can
+        replay rather than a job Camera never hears about.
+
+        Provider routing happens here too. A job asking for fal when fal is not usable
+        is re-routed to the fallback provider and the swap is recorded on the job
+        (profileFallbackFrom/Reason), so an operator can see the render did not run on
+        the requested provider.
+
+        A heartbeat thread runs for the duration at 40% of the lease interval; it is a
+        daemon, so it dies with the process and a hard kill leaves a lease that the
+        recovery sweeps reclaim. Working files live in queue/processing/<jobId>/.
+
+        Swallows no failures: every exception routes through schedule_retry_or_failure,
+        which decides retry versus terminal from the failure taxonomy.
+        """
         job = normalize_job_document(job)
         job_id = job["jobId"]
         self.current_job_id = job_id

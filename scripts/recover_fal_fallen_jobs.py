@@ -1,4 +1,11 @@
 #!/usr/bin/env python3
+"""One-off recovery: requeue fal jobs that failed from transient output-handling bugs.
+
+Written for a specific incident — fal renders that succeeded upstream but were left
+failed or retry_wait locally because the response was mishandled. It selects only that
+signature, so it is safe to leave in the tree, but check --dry-run output before
+running it: requeuing a job that genuinely failed costs another provider call.
+"""
 from __future__ import annotations
 
 import argparse

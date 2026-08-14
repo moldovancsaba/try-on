@@ -1,3 +1,11 @@
+"""Shape and validity rules for the Atlas `tryon_jobs` / suit documents.
+
+Camera writes these documents, this repo consumes them, so the two sides agree only
+by convention. The normalize_* helpers absorb the historical field spellings Camera
+has used; the validate_* helpers return machine-readable error codes that become the
+job's `error.code` in Atlas. Full contract: docs/TRYON_ATLAS_CONTRACT.md.
+"""
+
 from __future__ import annotations
 
 from typing import Any
@@ -60,6 +68,12 @@ def _clean_lower(value: Any) -> str:
 
 
 def normalize_processing_profile(value: str | None) -> str:
+    """Map any spelling of a processing profile onto a canonical PROCESSING_PROFILE_*.
+
+    Accepts the hyphen/underscore/short-name variants that have appeared in setups and
+    job documents. Unknown values return the generic profile rather than raising —
+    validate_job_document is what surfaces an unrecognised name as an error.
+    """
     raw = (value or "").strip().lower()
     if raw in {"motogp", "motogp_leather_magic", "motogp-leather-magic"}:
         return PROCESSING_PROFILE_MOTOGP
@@ -73,6 +87,14 @@ def normalize_processing_profile(value: str | None) -> str:
 
 
 def normalize_job_document(job: dict[str, Any]) -> dict[str, Any]:
+    """Return a copy of `job` with the nested job shape filled in from legacy fields.
+
+    Older Camera writers put the submission id, image url, and suit id at the top
+    level under several names; this lifts whichever is present into `source.*` and
+    `request.*` without overwriting values already nested there. Also defaults
+    schemaVersion, status/stage, and attemptCount so downstream code can index them
+    unconditionally. Does not validate — call validate_job_document for that.
+    """
     normalized = dict(job)
     normalized["schemaVersion"] = normalized.get("schemaVersion") or JOB_SCHEMA_VERSION
     normalized["status"] = _clean_lower(normalized.get("status")) or "queued"
@@ -110,6 +132,11 @@ def normalize_job_document(job: dict[str, Any]) -> dict[str, Any]:
 
 
 def normalize_suit_document(suit: dict[str, Any]) -> dict[str, Any]:
+    """Return a copy of `suit` with its id lifted from legacy keys and active defaulted.
+
+    A suit with no explicit `active` flag is treated as active, so suits written
+    before the flag existed keep working.
+    """
     normalized = dict(suit)
     normalized["schemaVersion"] = normalized.get("schemaVersion") or SUIT_SCHEMA_VERSION
     if not normalized.get("leatherSuitId"):
@@ -120,6 +147,14 @@ def normalize_suit_document(suit: dict[str, Any]) -> dict[str, Any]:
 
 
 def validate_job_document(job: dict[str, Any]) -> list[str]:
+    """Return every contract violation in `job` as an error code, empty if it is claimable.
+
+    Expects an already-normalized document: it reads `source.*` / `request.*` and will
+    report missing ids for a raw legacy document that normalize_job_document would
+    have fixed. Codes are stable and become the job's terminal `error.code`, so
+    classify_failure treats them as non-retryable — a malformed job never improves by
+    being retried. A schemaVersion of None is accepted as legacy.
+    """
     errors: list[str] = []
     schema_version = job.get("schemaVersion")
     if schema_version not in SUPPORTED_JOB_SCHEMA_VERSIONS and schema_version not in SUPPORTED_LEGACY_JOB_SCHEMA_VERSIONS:
@@ -164,6 +199,12 @@ def validate_job_document(job: dict[str, Any]) -> list[str]:
 
 
 def validate_suit_document(suit: dict[str, Any]) -> list[str]:
+    """Return every contract violation in `suit` as an error code, empty if usable.
+
+    A suit needs an id, an explicit active flag, and at least one way to reach its
+    image — any of the remote urls or the local asset path/key. Deactivated suits are
+    rejected here rather than silently skipped, so the job fails with a clear cause.
+    """
     errors: list[str] = []
     schema_version = suit.get("schemaVersion")
     if schema_version not in SUPPORTED_SUIT_SCHEMA_VERSIONS and schema_version not in SUPPORTED_LEGACY_SUIT_SCHEMA_VERSIONS:

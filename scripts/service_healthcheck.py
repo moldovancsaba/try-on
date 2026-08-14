@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+"""Print the state of both launchd services; exit non-zero if either is down.
+
+Intended for a shell prompt or a cron wrapper — the exit code is the signal, the
+printed detail is for a human reading the output afterwards.
+"""
 from __future__ import annotations
 
 import json

@@ -1,4 +1,13 @@
 #!/usr/bin/env python3
+"""Operator CLI for queue health, reconciliation, and failure backfill.
+
+The command-line half of what Worker Control shows: queue depth and provider circuit
+state, the reconciliation audit for jobs whose publish/notify sequence half-applied,
+and a backfill that fills in the failure taxonomy on older failed jobs.
+
+Reconciliation is read-only — it reports findings and marks which are safe to replay,
+it does not replay them. Usage examples: docs/TRYON_CRITICAL_INFRASTRUCTURE.md.
+"""
 from __future__ import annotations
 
 import argparse

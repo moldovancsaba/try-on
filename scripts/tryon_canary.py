@@ -1,4 +1,11 @@
 #!/usr/bin/env python3
+"""End-to-end canary: prove the local stack can still produce a render.
+
+Exercises the real path rather than pinging a health endpoint, and writes the outcome
+to .runtime/canary_status.json so an operator can see when the stack was last known
+good. Worth running after a model vault change or a long idle period, since both are
+how the stack breaks silently.
+"""
 from __future__ import annotations
 
 import json

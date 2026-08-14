@@ -1,3 +1,13 @@
+"""Output quality gates applied before a generated image is returned or published.
+
+The gate is deliberately crude — resolution, luminance, and mask coverage — because
+its job is catching the failure modes that produce a technically valid but useless
+image: an all-black render, a collapsed mask, a silently downscaled output. It is not
+an aesthetic judgement, and it must stay cheap enough to run on every job.
+
+Failures block the response; warnings are attached to it and surfaced in the UI.
+"""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -23,6 +33,17 @@ def get_quality_contracts() -> dict[str, dict[str, Any]]:
 
 
 def validate_image_output(feature_key: str, image, *, mask=None) -> dict[str, Any]:
+    """Check a generated image against its contract; return verdict, causes, and metrics.
+
+    `passed` is False only for hard failures — undersized output or a near-black frame.
+    Low tonal variance and out-of-range mask coverage are warnings, because both have
+    legitimate cases (a flat studio backdrop, a full-body suit covering most of the
+    frame) and blocking on them would reject good renders.
+
+    Accepts a PIL image or anything numpy can turn into one. Passing `mask` enables the
+    coverage check; without it that check is simply skipped. Raises KeyError for a
+    feature_key that has no contract.
+    """
     from PIL import Image
 
     contract = QUALITY_CONTRACTS[feature_key]
@@ -67,6 +88,13 @@ def validate_image_output(feature_key: str, image, *, mask=None) -> dict[str, An
 
 
 def validate_video_output(feature_key: str, output_path: Path) -> dict[str, Any]:
+    """Check a generated video file against its contract.
+
+    Currently unusable and uncalled: it reads `file_suffix` and `min_file_size_bytes`,
+    and no entry in QUALITY_CONTRACTS defines either, so every call raises KeyError.
+    It is kept as the shape a video contract would take — add those keys to a contract
+    before calling it, or delete both together if video output is not coming back.
+    """
     contract = QUALITY_CONTRACTS[feature_key]
     output_path = Path(output_path)
     failures: list[str] = []

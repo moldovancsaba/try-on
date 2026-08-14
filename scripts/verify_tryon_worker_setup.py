@@ -1,4 +1,13 @@
 #!/usr/bin/env python3
+"""Pre-flight check for the worker contract before running live jobs.
+
+Verifies the things a worker needs and cannot recover from at runtime: required
+environment variables, Atlas reachability, the queue directories, and the local
+try-on API. Run it after editing `.env.tryon-worker` and before letting the worker
+claim real Camera jobs, since a misconfigured worker leases jobs it cannot finish.
+
+Checks configuration only — it does not render anything. Use tryon_canary.py for that.
+"""
 from __future__ import annotations
 
 import os

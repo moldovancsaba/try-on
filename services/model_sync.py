@@ -1,3 +1,15 @@
+"""Deterministic provisioning of the shared model vault.
+
+Turns the ASSETS declarations in services.capabilities into downloads, so the vault is
+reproducible from the contract rather than from whatever a machine happens to have.
+`install.sh` runs the "core" profile; `scripts/sync_models.py` exposes it to operators.
+
+Downloads are resumable-ish rather than transactional: url_files skips a file that
+already exists (so a truncated download is never repaired — delete it to refetch), and
+hf snapshots rely on huggingface_hub's own caching. Always re-check readiness through
+build_capability_report afterwards instead of trusting that a sync "finished".
+"""
+
 from __future__ import annotations
 
 import json
@@ -75,6 +87,16 @@ def _download_url_files(asset_path: Path, source: dict[str, Any]) -> None:
 
 
 def sync_asset(models_root: Path, asset_key: str) -> dict[str, Any]:
+    """Fetch one vault asset and return its freshly evaluated readiness entry.
+
+    Dispatches on the asset's declared source kind — an HF snapshot (optionally
+    filtered by allow_patterns, so a large repo yields only the needed subtree) or a
+    set of direct file urls. Raises ValueError for an unknown kind, KeyError for an
+    unknown asset_key, and lets network errors propagate: a failed sync must be loud.
+
+    The returned entry can still say ready=False if the source did not deliver every
+    required file, which is the honest outcome and worth checking.
+    """
     asset = ASSET_MAP[asset_key]
     asset_path = models_root / asset.relative_path
     source = asset.source or {}

@@ -1,3 +1,12 @@
+"""Canonical paths for the shared model vault and app config.
+
+Every path decision goes through here so the vault stays canonical and relocatable:
+the root defaults to /Users/Shared/Models and is overridden with $TRYON_MODELS_ROOT.
+App settings deliberately live under the repo's .config/, not in the vault — the vault
+holds weights, not configuration (DEVELOPMENT_MANTRA.md rule 2). Settings written by
+older builds into the vault are migrated forward on startup.
+"""
+
 from __future__ import annotations
 
 import json

@@ -1,3 +1,12 @@
+"""The contract between shipped features and the shared model vault.
+
+ASSETS declares every checkpoint the app can need, where it lives under the vault
+root, which files prove it is complete, and how to fetch it. FEATURES maps those
+assets onto user-visible capabilities. Adding a feature that needs new weights means
+adding both — the vault layout is canonical, and per-project checkpoints are not
+allowed (see DEVELOPMENT_MANTRA.md rule 2).
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -130,6 +139,14 @@ def _resolve_required_file(base: Path, relative_file: str) -> Path:
 
 
 def evaluate_asset(models_root: Path, asset: AssetSpec) -> dict[str, Any]:
+    """Report whether one vault asset is present and complete.
+
+    `ready` requires the asset path to exist and every required_files entry under it to
+    exist too, so a half-finished download reports not-ready rather than ready-but-broken.
+    When the asset path is itself a file, the required-file check resolves to that file
+    instead of treating the path as a directory. The returned `source` is what the sync
+    tooling uses to re-fetch a missing asset.
+    """
     asset_path = _asset_root(models_root, asset)
     exists = asset_path.exists()
     missing_files: list[str] = []
@@ -159,6 +176,20 @@ def _feature_status(required_ready: bool) -> str:
 
 
 def build_capability_report(models_root: Path, *, runtime_state: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Report which features the shared model vault can currently serve.
+
+    Walks every ASSETS entry against `models_root`, then rolls the results up per
+    FEATURES entry: a feature is ready only if all of its required assets are, while
+    missing optional assets are reported as notes and do not block it.
+
+    `runtime_state` layers process state on top of vault state, because a vault can be
+    complete while the app cannot serve — a startup error or models still loading both
+    force try_on to unavailable. This is what backs GET /api/capabilities, and the
+    worker gates on it before claiming online work.
+
+    Pure filesystem existence checks: no checkpoint is opened or hashed, so a corrupt
+    file reads as ready here and fails later at load time.
+    """
     runtime_state = runtime_state or {}
     assets = {asset.key: evaluate_asset(models_root, asset) for asset in ASSETS}
     features: dict[str, Any] = {}
@@ -277,6 +308,12 @@ def feature_status_message(report: dict[str, Any], feature_key: str) -> str:
 
 
 def render_capability_markdown(report: dict[str, Any], *, feature_keys: tuple[str, ...] | None = None) -> str:
+    """Render a capability report as the Markdown block shown in the Gradio UI.
+
+    Truncates to the first two notes per feature: the panel is a status line, not a
+    diagnostic, and a vault missing many assets would otherwise push the controls off
+    screen. Call GET /api/capabilities for the complete picture.
+    """
     selected = feature_keys or tuple(feature["key"] for feature in FEATURES)
     lines = ["## Runtime Capabilities"]
     for feature_key in selected:

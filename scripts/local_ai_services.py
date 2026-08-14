@@ -1,4 +1,11 @@
 #!/usr/bin/env python3
+"""CLI for the local-only AI service family (list, model-packs, run, fixtures, report).
+
+Same services the /api/local-ai endpoints expose, for scripting and for checking model
+pack readiness without the app running. Everything reachable from here is local and
+zero-external-cost by contract — see docs/LOCAL_AI_SERVICES.md before adding anything
+that calls a paid API.
+"""
 from __future__ import annotations
 
 import argparse

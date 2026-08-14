@@ -1,4 +1,10 @@
 #!/usr/bin/env python3
+"""Print a dry-run throughput plan for a given job count. Renders nothing.
+
+Estimates how long a backlog would take on a single-slot worker at the configured
+poll interval. It is arithmetic for capacity planning, not a load test — nothing is
+submitted and no provider is called.
+"""
 from __future__ import annotations
 
 import argparse

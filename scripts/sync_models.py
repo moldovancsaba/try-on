@@ -1,4 +1,10 @@
 #!/usr/bin/env python3
+"""Sync the shared model vault to a named profile (install.sh runs "core").
+
+Idempotent: assets already present are left alone, so re-running it costs a readiness
+check rather than a re-download. Delete a broken asset directory to force a refetch —
+a truncated file counts as present.
+"""
 from __future__ import annotations
 
 import argparse
