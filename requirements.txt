@@ -28,3 +28,5 @@ scikit-image
 gfpgan>=1.3.8
 av==17.0.1
 mediapipe
+# Test runner for tests/ — the README operations playbooks call pytest directly.
+pytest

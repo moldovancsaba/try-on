@@ -570,7 +570,7 @@ cat "${TRYON_MODELS_ROOT:-/Users/Shared/Models}/manifest.json"
 ./.venv311/bin/python -m pytest -q tests/test_model_sync.py tests/test_worker_contracts.py
 ```
 
-If these tests are not runnable in your environment, run a manual smoke job via UI/API and confirm a clean output path.
+`install.sh` provisions `pytest`, so this runs in a stock environment. The full suite is `./.venv311/bin/python -m pytest -q tests`.
 
 ### How to manage APIs
 

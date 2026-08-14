@@ -1,3 +1,11 @@
+"""
+Texture/logo restoration pass for try-on output.
+
+Not reachable from the shipped pipeline: app.py forces `enable_deep_texture = False`
+on every render path, so `texture_repair_pass` is currently exercised only by
+tests/test_texture_repair.py. Kept for the day the override is lifted.
+"""
+
 import cv2
 import numpy as np
 from PIL import Image, ImageFilter

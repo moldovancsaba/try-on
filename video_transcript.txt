@@ -1,0 +1,318 @@
+[00:00.24] This might be the future of software.
+[00:03.44] Walk into a shop. And 15 minutes 
+later, someone hands you a custom  
+[00:07.52] scheduling app for your personal trainer 
+business. Or a food label scanner tailored  
+[00:12.32] to your allergies. Or a news app that 
+summarizes the topics you care about.
+[00:17.36] It’s like Jiffy Lube, but for custom software.
+[00:21.04] You might think, do people really want 
+that? And why would you go to a coding  
+[00:25.68] shop when ChatGPT could just build 
+the app on your laptop? After all,  
+[00:30.72] tech CEOs keep claiming AI will replace most 
+software engineers in the next 12 to 18 months.
+[00:37.68] But history tells a different story. One 
+of the biggest technological innovations  
+[00:43.28] didn’t replace workers in the way 
+many people expected. Instead,  
+[00:47.76] it reinvented an entire industry and 
+created more jobs than ever before.
+[00:53.92] I’m not talking about software. I’m 
+talking about cars. Because surprisingly,  
+[01:00.08] the two industries have a lot 
+more in common than you think.
+[01:04.00] In the early days, cars were built 
+by highly skilled craftsmen. They  
+[01:08.64] did so mostly by hand all in one 
+station. Tools and parts had to  
+[01:13.36] be constantly brought to them, 
+which was slow and cumbersome.
+[01:17.52] And many parts weren’t standardized. Even 
+ones made for the same model often needed  
+[01:23.52] manual adjustment or hammering 
+before they could fit together.
+[01:28.00] That meant every craftsman needed 
+intimate knowledge of every aspect  
+[01:32.72] of car building. Training took a long 
+time. Experienced workers were scarce.
+[01:38.64] So cars were extremely expensive. 
+Only the wealthy could afford them.
+[01:44.64] And then, came Henry Ford in 1913.
+[01:48.56] Many people think Ford invented the 
+assembly line. He didn’t. Versions of  
+[01:53.92] assembly lines had existed for centuries 
+in places like shipyards and mills.
+[02:00.00] Ford was specifically inspired by meatpacking 
+factories. He used moving tracks and pulley  
+[02:06.24] systems to bring engines, frames, and parts to 
+workers so that they could focus on building.
+[02:13.28] This saved a lot of time. But it also meant 
+each worker only needed to master one step of  
+[02:19.76] the building process. This significantly sped up 
+training and made it easier to hire more workers.
+[02:27.20] Ford also invested heavily in 
+precision machines that could  
+[02:30.96] produce interchangeable parts, so that they 
+could fit together without manual adjustment.
+[02:37.20] Previously, the fastest craftsman 
+could build a car in about 12 hours.  
+[02:41.68] Ford’s assembly line cut that down to 93 minutes.
+[02:46.00] But perhaps his greatest contribution wasn’t any 
+individual innovation, but all of them combined.
+[02:53.12] In 1928, he opened the River 
+Rouge Complex near Detroit,  
+[02:58.32] the largest manufacturing facility in the 
+world at the time. It had its own steel mills,  
+[03:03.92] glass plant, tire factory, powerhouse, 
+and even an internal railroad system.
+[03:10.88] Ford called this Ore to Assembly, the 
+ultimate vertical integration. Raw  
+[03:16.56] materials arrived by ship, and finished 
+cars rolled off every 49 seconds.
+[03:21.68] Even the famous Model T color, Japan Black,  
+[03:24.72] was chosen because it dried fast enough 
+to keep up with the assembly line.
+[03:30.00] All of this slashed the price 
+of a Model T by nearly 70%.
+[03:35.20] In many ways, software today looks 
+a lot like early handcrafted cars.
+[03:40.48] You need highly skilled engineers to 
+stitch together databases, interfaces,  
+[03:46.00] APIs, security systems, each piece made for a 
+unique requirement. It’s slow and expensive.
+[03:53.68] But AI might just become the software 
+equivalent of an assembly line. It can  
+[03:58.88] generate thousands of lines of database 
+schema, user interfaces, and unit tests  
+[04:04.48] in seconds. Automating repetitive typing that 
+used to take days. Now it only takes hours.
+[04:11.76] But, doesn’t that mean you don’t 
+need as many engineers for the  
+[04:15.36] same amount of work? So most of 
+them will be out of a job soon?
+[04:19.52] Not necessarily. And the 
+car industry showed us why.
+[04:24.40] You’d think once assembly lines allowed 
+less-experienced workers to build cars,  
+[04:30.08] all those highly skilled 
+craftsmen would get fired.
+[04:33.92] But something else happened. As cars got cheaper,  
+[04:37.84] millions of people who could never 
+afford a car suddenly wanted one.
+[04:42.80] Ford couldn’t scale production fast enough 
+to meet that demand. So not only did he keep  
+[04:48.80] his old craftsmen, he needed to hire more. 
+In fact, over the course of two decades,  
+[04:55.12] he nearly tripled wages so that he could 
+attract as many workers as possible.
+[05:01.68] Economists call this Demand Expansion.
+[05:05.28] Now, demand expansion is not guaranteed 
+every time technology improves. Automatic  
+[05:10.80] telephone exchanges largely replaced phone  
+[05:13.68] operators. Word processors and computers 
+dramatically reduced the need for typists.
+[05:20.08] But in both of those cases, 
+the technology met the need  
+[05:23.92] so completely that there wasn’t much 
+new demand waiting on the other side,  
+[05:29.36] like the millions of households 
+that couldn’t afford cars before.
+[05:33.76] So the real question is: Is there a huge demand 
+for software that’s being held back by cost?
+[05:40.78] Let’s dig deeper.
+[05:40.80] See, for decades, software costs tens 
+or hundreds of thousands of dollars.  
+[05:46.56] Big projects can easily run into the millions. 
+Which means, in practice, only large companies can  
+[05:53.04] usually afford it. I know this because I spent 
+years working at a software consulting firm.
+[05:59.04] I cannot count the number 
+of times I was approached  
+[06:01.92] by small business owners who wanted 
+software tailored to their needs.
+[06:07.04] A dentist who wanted a patient 
+portal that’s connected with other  
+[06:11.04] specialists. A restaurant owner who wanted 
+inventory management built around seasonal  
+[06:16.40] ingredients and local suppliers. 
+A personal trainer who wanted a  
+[06:20.96] holistic app to track physical progress, 
+nutrition intake, and mental well-being.
+[06:27.44] But almost every time, I had to watch 
+them get disappointed by the price tag.
+[06:32.80] The market for this unmet need is enormous.  
+[06:36.96] In 2025 alone, companies spent over $50 billion on 
+custom software. By 2030, it’s projected to reach  
+[06:45.76] more than $140 billion, with small and medium 
+businesses among the fastest-growing segments.
+[06:52.80] Now, some of you might say, “But don’t 
+small businesses already have cheap tools  
+[06:57.68] like Wordpress, Airtable, Zapier, and 
+other no-code / low-code app builders?”
+[07:04.08] Absolutely. Those platforms can be intuitive for 
+some tech-savvy users. And they do lower the cost  
+[07:11.44] of software to some extent. But many people 
+still run into what's called the 90/10 Wall.
+[07:18.24] A dentist might be able to build 90% 
+of a patient portal using wordpress and  
+[07:23.44] Google form, but when they need payment 
+integration and security compliance,  
+[07:28.48] they still have to hire a professional.
+[07:31.20] Not to mention different businesses can  
+[07:33.68] have drastically different needs 
+even within the same industry.
+[07:38.00] One personal trainer may 
+specialize in weight-loss,  
+[07:41.60] while another focuses on strength training. 
+Neither would want to change their business  
+[07:46.64] model to fit the software. They want 
+the software to how they already work.
+[07:52.64] Generic software simply doesn’t offer that 
+kind of customization and flexibility.  
+[07:58.48] So, if AI can dramatically lower 
+the cost of true custom software,  
+[08:03.84] millions of businesses will 
+gladly become new customers.
+[08:07.92] Now, most conversations about software 
+demand stop at businesses. But there may  
+[08:13.60] be an even bigger market that almost 
+nobody talks about: regular people.
+[08:19.84] See, people have been customizing 
+digital experiences for decades,  
+[08:24.24] avatars, filters, game mods, browser extensions.
+[08:29.04] And recently, we started seeing early hints of 
+something bigger. Remember the OpenClaw craze?
+[08:35.28] At one point, it became so popular in 
+China that people were lining up to get  
+[08:40.48] help installing and configuring it, all for 
+a chance to have a custom AI assistant that  
+[08:47.52] could manage calendars, shop online, 
+and automate tedious computer tasks.
+[08:53.84] And OpenClaw wasn’t even that good. 
+It was unintuitive, unreliable,  
+[08:59.28] and full of security vulnerabilities. 
+Imagine what happens when more of these  
+[09:04.88] tools become useful in other aspects 
+of our lives. The market for consumer  
+[09:10.32] software could expand significantly, 
+potentially rivaling business software.
+[09:15.68] That’s why I don’t think the idea of 
+“Jiffy Lube for software” is nearly  
+[09:20.48] as far-fetched as it sounds. Maybe not 
+literal storefronts on every corner. Some  
+[09:26.56] might be completely online. Some 
+might do occasional home visits.
+[09:30.88] But the demand is definitely there.
+[09:34.00] Ok. I know. I still haven’t answered your 
+biggest question: If AI can build apps,  
+[09:40.24] why wouldn’t regular people just use AI directly 
+instead of hiring a person or a coding shop?
+[09:47.04] Well, let me ask you this, especially if you 
+have a car: Do you change your own oil? Sure,  
+[09:54.16] some of you do. But most don’t. 
+Otherwise, Jiffy Lube wouldn’t exist.
+[10:00.24] And changing oil is far easier than 
+building software. There are thousands  
+[10:05.20] of tutorials online for your exact car model.
+[10:09.12] Yet most people still pay someone else 
+to do it for them. Maybe they don’t  
+[10:13.84] have the right tools. Maybe they 
+don’t want to make a mistake. Or,  
+[10:17.76] they simply don’t want to spend 
+their Saturday under a greasy car.
+[10:22.24] Software is no different.
+[10:24.56] Even if AI makes coding a lot easier, many 
+people will still prefer a professional who  
+[10:29.92] can do it faster, better, and safer. Not 
+to mention AI hallucination may never go  
+[10:35.92] away. So at some point, you still 
+need human coders to fix the bugs.
+[10:41.60] But there’s an even deeper reason why 
+people prefer hiring a professional.
+[10:47.20] If I want a food label scanner for my allergies,  
+[10:50.64] I wouldn’t trust a random AI. 
+I’d want someone reputable,  
+[10:55.52] someone with experience building medical apps, 
+to make sure the app won’t end up harming me.
+[11:01.44] If I want a budgeting app, I’d want 
+someone with accounting experience.  
+[11:06.00] If I want a contract app, I’d want 
+someone with legal experience.
+[11:10.88] So not only will there be more demand for coders,  
+[11:14.88] there will be more demand for 
+coders with Domain Expertise.
+[11:19.36] Now, some of you hardcore engineers might still 
+be thinking: I don’t want to spend my career  
+[11:24.72] building budgeting apps. What if AI takes away 
+all the fun and challenging parts of my job.
+[11:31.36] Well, this might seem counterintuitive, 
+but AI will likely create more technically  
+[11:36.80] challenging jobs too. In fact, something 
+similar happened to the car industry.
+[11:42.48] Like I said before, Ford didn’t fire 
+the craftsmen after he implemented the  
+[11:47.68] assembly line. But a lot of them still ended up 
+quitting, because they hated the repetitive work.
+[11:54.80] But soon, they found equally 
+exciting opportunities,  
+[11:58.40] because the growth of the car industry also 
+propelled the market for artisanal cars.  
+[12:04.00] In fact, the 1930s was widely considered the 
+golden age of handcrafted automotive design.
+[12:10.72] So some of the craftsmen did just that,  
+[12:13.60] while others moved into entirely new careers 
+that were just as technical, if not more.
+[12:20.24] The car factories needed tool-and-die 
+makers to build precision equipment.  
+[12:25.20] They needed millwrights to install 
+and maintain machinery. And they  
+[12:29.92] needed production engineers to design 
+increasingly sophisticated assembly lines.
+[12:35.76] As the industry matured, jobs became 
+more technically challenging, not less.
+[12:42.00] And we’re already seeing this trend in software.
+[12:45.52] Job postings have risen since 2023, especially 
+senior engineering positions in AI companies,  
+[12:53.20] because there’s a growing need to 
+build out compute infrastructure,  
+[12:57.36] integrated platforms, and cybersecurity systems.
+[13:01.12] And, there will be entirely new categories 
+of careers that we can’t even imagine yet,  
+[13:07.04] not only in the tech but also in 
+other industries, just like how  
+[13:11.44] the rise of cars supercharged construction, 
+logistics, hospitality, finance, and more.
+[13:19.04] We might have ecologists who manage swarms of 
+AI drones to survey and restore ecosystems.  
+[13:27.20] Doctors who use AI tools to diagnose 
+and treat patients. Workflow engineers  
+[13:33.76] who redesign supply chains, classrooms, and 
+governments around human-AI collaboration.
+[13:41.04] Economists call this Industrial Specialization 
+and Diversification. Much like in nature,  
+[13:47.60] when an ecosystem matures, niches become more 
+specialized, species become more diverse,  
+[13:54.40] and everything becomes more interconnected.
+[13:57.68] Maybe that’s the bigger lesson here. Disruptive 
+technologies don’t have to be destructive. When  
+[14:04.40] they are directed with care and intention, they 
+can expand our economy and enrich our lives.
+[14:12.40] Now, everything I have said so far 
+still depends on one big assumption.
+[14:17.68] AI has to first become good enough to make 
+software drastically cheaper. And that is  
+[14:24.24] still very much an open question. Many software 
+companies that have started using AI heavily  
+[14:30.64] have yet to see clear productivity 
+gains. Some are even regretting it.
+[14:35.92] Part of the challenge is technical. Current 
+LLM architectures may have limitations that  
+[14:42.00] are much harder to overcome than many people 
+assume. There are also systemic barriers that  
+[14:49.04] have nothing to do with AI itself. Check out my 
+previous videos to learn more about these issues.
+[14:56.16] And if you'd like to support my work and 
+help my team rely less on ads and sponsors,  
+[15:01.44] there's a Patreon link in the description. 
+No pressure. Thank you for being here.

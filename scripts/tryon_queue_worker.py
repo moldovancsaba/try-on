@@ -402,6 +402,13 @@ def _looks_like_hex_submission_id(value: str | None) -> bool:
 
 
 def classify_failure(message: str) -> tuple[bool, str]:
+    """Map a raw error string to (retryable, category).
+
+    Categories are the stable contract documented in docs/TRYON_ATLAS_CONTRACT.md.
+    Matching is substring-based on provider error text, so it is deliberately loose
+    and can false-positive (a "502" anywhere in the message reads as transient).
+    Anything unrecognised falls through to a terminal processing_failed.
+    """
     lower = message.lower()
     if any(
         token in lower
@@ -433,6 +440,8 @@ def classify_failure(message: str) -> tuple[bool, str]:
         return False, "invalid_result_url"
     if "invalid_job_" in lower or "invalid_processing_profile" in lower or "unsupported_job_schema_version" in lower:
         return False, "invalid_job_contract"
+    # Operator/priority aborts are intentional interruptions, not defects: mark them
+    # retryable so the abandoned job re-enters the queue instead of dying.
     if "job_aborted_for_priority_push" in lower or "operator_aborted" in lower:
         return True, "transient_runtime_error"
     return False, "processing_failed"
@@ -444,6 +453,11 @@ def is_timeout_failure(message: str) -> bool:
 
 
 def retry_delay_minutes(attempt_count: int) -> int | None:
+    """Backoff for the next attempt, or None to stop retrying and fail the job.
+
+    Two retries only (5 min, then 30 min). Keep the first delay in step with the
+    5-minute nextAttemptAt used by the recover_* sweeps below.
+    """
     if attempt_count <= 1:
         return 5
     if attempt_count == 2:
@@ -865,6 +879,11 @@ class TryOnQueueWorker:
             print(f"[tryon-worker] heartbeat write failed: {redact_url(str(exc))}")
 
     def recover_stale_jobs(self) -> int:
+        """Any worker's active job whose lease expired -> retry_wait in 5 minutes.
+
+        Broadest of the five recovery sweeps: not scoped to this worker, so it also
+        reclaims work abandoned by a machine that never came back.
+        """
         now = now_iso()
         result = self.jobs.update_many(
             {
@@ -892,6 +911,11 @@ class TryOnQueueWorker:
         return int(result.modified_count)
 
     def recover_stale_heartbeat_jobs(self) -> int:
+        """Job still holding a live lease but silent -> retry_wait in 5 minutes.
+
+        Catches a process wedged mid-render: the lease has not expired yet, but no
+        heartbeat has landed in max(180s, 2x lease), so nothing is really running.
+        """
         now = datetime.now(UTC)
         stale_seconds = max(180, int(self.config.lease_duration_seconds * 2))
         heartbeat_threshold = (now - timedelta(seconds=stale_seconds)).isoformat().replace("+00:00", "Z")
@@ -932,6 +956,11 @@ class TryOnQueueWorker:
         return int(result.modified_count)
 
     def recover_interrupted_timeout_jobs(self) -> int:
+        """Our own job that already timed out twice -> terminal failure, no requeue.
+
+        Runs before the requeue sweep below and deliberately steals its matches: a
+        job that times out repeatedly would otherwise loop through the queue forever.
+        """
         now = now_iso()
         result = self.jobs.update_many(
             {
@@ -969,6 +998,12 @@ class TryOnQueueWorker:
         return int(result.modified_count)
 
     def recover_interrupted_owned_jobs(self) -> int:
+        """Our own active job that did not time out -> straight back to queued, now.
+
+        The restart case: this worker died mid-job, so on the next loop it reclaims
+        its own orphans immediately. Timeout victims are excluded here because the
+        sweep above has already failed them terminally.
+        """
         now = now_iso()
         result = self.jobs.update_many(
             {
@@ -1009,6 +1044,11 @@ class TryOnQueueWorker:
         return int(result.modified_count)
 
     def recover_operator_aborted_jobs(self) -> int:
+        """Jobs an operator aborted to let a priority push through -> queued again.
+
+        Clears the error and resets attemptCount to 0, so a pushed-aside job gets a
+        full retry budget rather than inheriting the attempts it burned before.
+        """
         selector = {
             "status": "failed",
             "stage": "aborted",
@@ -1175,6 +1215,15 @@ class TryOnQueueWorker:
         return bool(str(result.get("publicResultUrl") or "").strip())
 
     def _build_camera_completion_payload_variants(self, source_submission_id: str, source: dict[str, Any]) -> list[dict[str, Any]]:
+        """Candidate id/field shapes to probe Camera's completion endpoint with.
+
+        Camera accepts the submission id under several names inbound (see
+        docs/TRYON_ATLAS_CONTRACT.md:147), and which one the completion endpoint wants
+        is not pinned down, so notify_camera_completion POSTs these in order until one
+        is not rejected. Ordering matters: the most likely id comes first, because each
+        attempt is a real POST and a partially-accepting endpoint could see duplicates.
+        Collapse this to a single shape once the contract is confirmed.
+        """
         variants: list[dict[str, Any]] = []
         seen: set[str] = set()
 
@@ -1631,6 +1680,12 @@ class TryOnQueueWorker:
         return PROCESSING_PROFILE_MOTOGP
 
     def _is_fal_fallback_candidate(self, message: str) -> bool:
+        """Should this fal error hand the job to the next provider?
+
+        Covers auth, transport, and empty-output failures — anything where retrying fal
+        is pointless but another provider would likely succeed. Substring matching, so
+        bare "401"/"403" anywhere in the message counts; err toward falling back.
+        """
         lower = (message or "").lower()
         return any(
             token in lower

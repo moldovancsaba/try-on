@@ -431,6 +431,7 @@ def _build_identity_masks(mask_result: dict[str, Any], include_hair: bool = True
     }
 
 
+# DensePose labels: 3 right hand, 4 left hand (vendor DENSE_INDEX_MAP).
 _DENSEPOSE_HAND_LABELS = (3, 4)
 
 
@@ -584,8 +585,10 @@ def _load_models():
         # of falling back to any bundled or remote default.
         os.environ["SMF_CATVTON_VAE_PATH"] = str(_MODELS_VAE)
         
-        # Precision VAE Handshake: Use float32 for VAE on MPS to prevent color drift
-        # Even if the UNet is float16, the VAE is safer in float32 for color accuracy
+        # weight_dtype below is the UNet/pipeline dtype, not the VAE dtype. The VAE is
+        # deliberately kept at float32 on MPS to prevent colour drift on decode, but that
+        # is enforced inside CatVTONPipeline (vendor/CatVTON/model/pipeline.py:60), not
+        # here. Do not "reconcile" the fp16-on-MPS argument below with that rule.
         pipe = CatVTONPipeline(
             base_ckpt=str(_MODELS_SD),
             attn_ckpt=str(_MODELS_CAT),
@@ -689,6 +692,9 @@ def _run_inference_locked(person_img, cloth_img, category, sleeve_length, pant_l
     # Preserve image fidelity for garments and hands.
     # - Disable experimental texture warp restoration (can blur logos/textures).
     # - Disable hand source-patching (prevents low-quality hand cutouts).
+    # These are hard overrides on every entry path (UI and /api/tryon/run), so the
+    # matching UI controls, the TryOnApiRequest fields, and the MotoGP profile's
+    # warp_strength are all inert, and warp_repair.py is unreachable at runtime.
     enable_deep_texture = False
     warp_strength = 0.0
     preserve_hands = False
@@ -952,6 +958,9 @@ def _run_inference_locked(person_img, cloth_img, category, sleeve_length, pant_l
     result_img = Image.fromarray(img_np)
     
     # Restore higher-frequency garment texture details from the source image.
+    # Unreachable: enable_deep_texture is forced False by the fidelity overrides above.
+    # Kept so the pass can be restored by dropping that override; delete this branch and
+    # warp_repair.py together if the feature is abandoned for good.
     if enable_deep_texture and cloth_img is not None:
         progress(0.91, desc="Warping Original Textures...")
         from warp_repair import texture_repair_pass
@@ -1526,6 +1535,7 @@ class TryOnApiRequest(BaseModel):
     use_vae_hf: bool = True
     sampler_name: str = "Euler A"
     composite_strength: float = 0.0
+    # Accepted for wire compatibility but ignored: the render path forces both off.
     enable_deep_texture: bool = False
     warp_strength: float = 1.0
 
@@ -1593,7 +1603,7 @@ def _apply_processing_profile(payload: TryOnApiRequest) -> TryOnApiRequest:
         payload.sampler_name = "DPM++ 2M"
         payload.composite_strength = 0.0
         payload.enable_deep_texture = False
-        payload.warp_strength = 1.0
+        payload.warp_strength = 1.0  # inert: zeroed again by the render path's fidelity overrides
     return payload
 
 
