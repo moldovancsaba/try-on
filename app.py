@@ -439,8 +439,9 @@ def _build_hand_preserve_mask(mask_result: dict[str, Any]) -> Image.Image | None
     """
     Build a hand-preservation mask from DensePose labels.
 
-    This is a hard guard so user hands are never replaced by diffusion output
-    even if the garment edit mask expands incorrectly around raised arms.
+    Intended as a hard guard against diffusion repainting raised-arm hands, but
+    currently unused: the render path forces preserve_hands=False, so nothing calls
+    this with a truthy flag. Re-enable there before relying on it.
     """
     if "densepose" not in mask_result:
         return None
@@ -587,8 +588,9 @@ def _load_models():
         
         # weight_dtype below is the UNet/pipeline dtype, not the VAE dtype. The VAE is
         # deliberately kept at float32 on MPS to prevent colour drift on decode, but that
-        # is enforced inside CatVTONPipeline (vendor/CatVTON/model/pipeline.py:60), not
-        # here. Do not "reconcile" the fp16-on-MPS argument below with that rule.
+        # is enforced inside CatVTONPipeline (see `self.vae_dtype` in
+        # vendor/CatVTON/model/pipeline.py), not here. Do not "reconcile" the
+        # fp16-on-MPS argument below with that rule.
         pipe = CatVTONPipeline(
             base_ckpt=str(_MODELS_SD),
             attn_ckpt=str(_MODELS_CAT),
@@ -695,6 +697,8 @@ def _run_inference_locked(person_img, cloth_img, category, sleeve_length, pant_l
     # These are hard overrides on every entry path (UI and /api/tryon/run), so the
     # matching UI controls, the TryOnApiRequest fields, and the MotoGP profile's
     # warp_strength are all inert, and warp_repair.py is unreachable at runtime.
+    # preserve_hands=False likewise makes _build_hand_preserve_mask and the hand
+    # recomposite block dead code; hands stay protected upstream instead (see there).
     enable_deep_texture = False
     warp_strength = 0.0
     preserve_hands = False
@@ -973,7 +977,10 @@ def _run_inference_locked(person_img, cloth_img, category, sleeve_length, pant_l
         composite_radius = 0.0 if cloth_alpha_mask is not None else 2.0
         result_img = _composite_generated_garment(person, result_img, mask_pil, feather_radius=composite_radius)
 
-    # Always preserve hand regions from the source photo to prevent accidental occlusion.
+    # Unreachable: preserve_hands is forced False above, so hand_mask_pil is always None.
+    # Hands are not unprotected, though — AutoMasker keeps hands/feet out of the edit
+    # mask (hands_protect_area in the vendored cloth_masker), and the composite step
+    # above restores everything outside the garment mask from the source photo.
     if hand_mask_pil is not None:
         progress(0.918, desc="Preserving hands...")
         hand_src = person.resize(result_img.size, Image.LANCZOS) if person.size != result_img.size else person

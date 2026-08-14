@@ -1217,8 +1217,8 @@ class TryOnQueueWorker:
     def _build_camera_completion_payload_variants(self, source_submission_id: str, source: dict[str, Any]) -> list[dict[str, Any]]:
         """Candidate id/field shapes to probe Camera's completion endpoint with.
 
-        Camera accepts the submission id under several names inbound (see
-        docs/TRYON_ATLAS_CONTRACT.md:147), and which one the completion endpoint wants
+        Camera accepts the submission id under several names inbound (see the id
+        normalization rules in docs/TRYON_ATLAS_CONTRACT.md), and which one the endpoint wants
         is not pinned down, so notify_camera_completion POSTs these in order until one
         is not rejected. Ordering matters: the most likely id comes first, because each
         attempt is a real POST and a partially-accepting endpoint could see duplicates.

@@ -148,7 +148,11 @@ Event-level setup selection (recommended):
 4. Atlas stores only setup selection metadata (`setupId`, name, defaults, ranking); setup payloads live in local catalog file (`.config/tryon_setups.json`).
 5. If a setup is unknown locally, the job falls back to the local fallback profile.
 
-Required environment variables:
+Required environment variables. Provider names are genericized here — `EXTERNAL_PROVIDER_*`
+and `OPTIONAL_PROVIDER_*` are placeholders, not variables the worker reads. Copy
+`.env.tryon-worker.example` for the literal names, and note that
+`TRYON_POLL_INTERVAL_SECONDS` is documentation only: the poll interval is held in the
+worker settings store and changed via the Worker Control page.
 
 ```bash
 MONGODB_ATLAS_URI=...
