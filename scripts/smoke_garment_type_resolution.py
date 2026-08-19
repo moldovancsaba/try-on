@@ -184,15 +184,19 @@ def main() -> int:
     # --- data URIs replace ImgBB for fal inputs (ImgBB outage 2026-08-19) ---
     import base64 as _b64, io as _io, tempfile
     from PIL import Image as _Img
+    # Transparent garments MUST be composited onto white, never sent as raw
+    # alpha: FASHN flattens alpha to black, which made the Debrecen jersey's
+    # black side panels read as long sleeves (live 2026-08-19).
     with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
-        _Img.new("RGBA", (8, 8), (255, 0, 0, 128)).save(tmp.name)
+        _Img.new("RGBA", (8, 8), (255, 0, 0, 0)).save(tmp.name)
         uri = _image_data_uri(Path(tmp.name))
-    if not uri.startswith("data:image/png;base64,"):
-        failures.append(f"alpha image data URI wrong prefix: {uri[:40]}")
+    if not uri.startswith("data:image/jpeg;base64,"):
+        failures.append(f"alpha image data URI must be white-composited JPEG, got: {uri[:40]}")
     else:
-        decoded = _Img.open(_io.BytesIO(_b64.b64decode(uri.split(",", 1)[1])))
-        if decoded.size != (8, 8):
-            failures.append("data URI roundtrip lost the image")
+        decoded = _Img.open(_io.BytesIO(_b64.b64decode(uri.split(",", 1)[1]))).convert("RGB")
+        r, g, b = decoded.getpixel((4, 4))
+        if min(r, g, b) < 240:
+            failures.append(f"fully transparent pixel should composite to white, got {(r, g, b)}")
 
     for line in failures:
         print(f"FAIL {line}")

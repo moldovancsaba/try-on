@@ -431,12 +431,18 @@ def _image_data_uri(image_path: Path, max_side: int = 1280) -> str:
         image.thumbnail((max_side, max_side))
         buffer = io.BytesIO()
         if image.mode in ("RGBA", "LA") or "transparency" in image.info:
-            image.save(buffer, "PNG")
-            mime = "image/png"
-        else:
-            image.convert("RGB").save(buffer, "JPEG", quality=92)
-            mime = "image/jpeg"
-    return f"data:{mime};base64,{base64.b64encode(buffer.getvalue()).decode()}"
+            # Composite transparency onto WHITE, never pass raw alpha: FASHN
+            # flattens alpha to black, which merged the Debrecen jersey's
+            # black side panels with the background so the model read a
+            # long-sleeved silhouette and painted sleeves onto bare arms.
+            # The same garment on a white product-shot background renders
+            # sleeveless with bare arms - verified A/B on the same
+            # person+garment pair (2026-08-19).
+            base = Image.new("RGBA", image.size, (255, 255, 255, 255))
+            base.alpha_composite(image.convert("RGBA"))
+            image = base
+        image.convert("RGB").save(buffer, "JPEG", quality=92)
+    return f"data:image/jpeg;base64,{base64.b64encode(buffer.getvalue()).decode()}"
 
 
 def should_reroute_garment_typed_render_to_fal(render_source: str, garment_type: str, processing_profile: str) -> bool:
