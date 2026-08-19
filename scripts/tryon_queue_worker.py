@@ -516,6 +516,10 @@ def classify_failure(message: str) -> tuple[bool, str]:
         return False, "invalid_result_url"
     if "invalid_job_" in lower or "invalid_processing_profile" in lower or "unsupported_job_schema_version" in lower:
         return False, "invalid_job_contract"
+    # Outfit validation failures (try-on#39) never improve on retry: a type
+    # mismatch or a non-local profile is a contract violation, not a blip.
+    if "outfit_" in lower:
+        return False, "invalid_job_contract"
     # Operator/priority aborts are intentional interruptions, not defects: mark them
     # retryable so the abandoned job re-enters the queue instead of dying.
     if "job_aborted_for_priority_push" in lower or "operator_aborted" in lower:
@@ -1580,6 +1584,91 @@ class TryOnQueueWorker:
             raise RuntimeError("local_tryon_api_missing_output")
         return data
 
+    def _run_outfit_passes(
+        self,
+        *,
+        job_id: str,
+        job: dict[str, Any],
+        payload: dict[str, Any],
+        processing_profile: str,
+        person_input_path: Path,
+        top_input_path: Path,
+        workspace_root: Path,
+        result_path: Path,
+        bottom_suit_id: str,
+    ) -> dict[str, Any]:
+        """Two-pass outfit rendering (try-on#39): pass 1 applies the top
+        (Upper category) to the person photo; pass 2 applies the bottom
+        (Lower category) to pass 1's output; pass 2's output is the job's
+        one and only result. Order is fixed top-first: the bottom's Lower
+        mask cannot damage the already-rendered top, while the reverse order
+        would let an Upper mask repaint the shorts' waistband region.
+
+        One job, one result: the intermediate pass-1 image never leaves the
+        local workspace and is deleted on every exit path. Any pass failing
+        fails the whole job through the normal retry taxonomy - no partial
+        result is ever published. Local provider only; external providers
+        fail fast before any render spend.
+        """
+        if processing_profile in (
+            PROCESSING_PROFILE_SEGMIND_IDM_VTON,
+            PROCESSING_PROFILE_FAL_TRYON,
+            PROCESSING_PROFILE_GOOGLE_EDGE_TRYON,
+        ):
+            raise RuntimeError("outfit_requires_local_provider")
+
+        request = job.get("request") or {}
+        top_id = str(request.get("leatherSuitId") or "").strip()
+        if top_id == bottom_suit_id:
+            raise RuntimeError(f"outfit_bottom_type_mismatch:{bottom_suit_id}")
+        top_suit = self.suits.find_one({"leatherSuitId": top_id, "active": True}) or {}
+        if str(top_suit.get("garmentType") or "") != "top":
+            raise RuntimeError(f"outfit_top_type_mismatch:{top_id}")
+        bottom_suit = self.suits.find_one({"leatherSuitId": bottom_suit_id, "active": True}) or {}
+        if str(bottom_suit.get("garmentType") or "") != "bottom":
+            raise RuntimeError(f"outfit_bottom_type_mismatch:{bottom_suit_id}")
+        if not self.local_tryon_api_is_ready():
+            raise RuntimeError("local_tryon_api_not_ready")
+
+        bottom_input_path = workspace_root / "outfit_bottom_input.png"
+        self.stage_suit_asset(bottom_suit_id, bottom_input_path)
+        pass1_path = workspace_root / "outfit_pass1.png"
+        try:
+            # Pass 1: top on the person photo. The payload's mask_mode
+            # carries through - a sleeveless top composes with expose_arms
+            # (try-on#38) here, on the pass that actually renders arms.
+            pass1_payload = dict(payload)
+            pass1_payload["category"] = "upper"
+            pass1_payload["category_source"] = "garment_type"
+            started = time.monotonic()
+            self.call_local_tryon_api(person_input_path, top_input_path, pass1_path, pass1_payload)
+            print(
+                f"[tryon-worker] job={job_id} pass=1 garment={top_id} category='upper' "
+                f"took={time.monotonic() - started:.1f}s",
+                flush=True,
+            )
+            self.heartbeat(job_id)
+
+            # Pass 2: bottom on pass 1's output. Lower category; no sleeve or
+            # arm concerns apply to a bottom, so both are reset explicitly.
+            pass2_payload = dict(payload)
+            pass2_payload["category"] = "lower"
+            pass2_payload["category_source"] = "garment_type"
+            pass2_payload["mask_mode"] = "default"
+            pass2_payload["sleeve_length"] = "default"
+            started = time.monotonic()
+            api_result = self.call_local_tryon_api(pass1_path, bottom_input_path, result_path, pass2_payload)
+            print(
+                f"[tryon-worker] job={job_id} pass=2 garment={bottom_suit_id} category='lower' "
+                f"took={time.monotonic() - started:.1f}s",
+                flush=True,
+            )
+            return api_result
+        finally:
+            # One job, one result: the intermediate never survives - success,
+            # failure, or retry (the retry re-runs both passes from scratch).
+            pass1_path.unlink(missing_ok=True)
+
     def call_google_edge_tryon_api(self, person_input_path: Path, suit_input_path: Path, output_path: Path, payload: dict[str, Any]) -> dict[str, Any]:
         payload = dict(payload)
         local_payload = {
@@ -2545,7 +2634,23 @@ class TryOnQueueWorker:
             )
 
             self.update_stage(job_id, "processing", "running_tryon")
-            if processing_profile == PROCESSING_PROFILE_SEGMIND_IDM_VTON:
+            outfit_bottom_id = str((job.get("request") or {}).get("outfitBottomLeatherSuitId") or "").strip()
+            if outfit_bottom_id:
+                # try-on#39: two-piece outfit job - two sequential local
+                # renders, one atomic result. Validations inside fail fast
+                # with named outfit_* errors before any render spend.
+                api_result = self._run_outfit_passes(
+                    job_id=job_id,
+                    job=job,
+                    payload=payload,
+                    processing_profile=processing_profile,
+                    person_input_path=person_input_path,
+                    top_input_path=suit_input_path,
+                    workspace_root=workspace_root,
+                    result_path=result_path,
+                    bottom_suit_id=outfit_bottom_id,
+                )
+            elif processing_profile == PROCESSING_PROFILE_SEGMIND_IDM_VTON:
                 _normalize_segmind_aspect(person_input_path)
                 _normalize_segmind_aspect(suit_input_path)
                 api_result = self.call_segmind_tryon_api(person_input_path, suit_input_path, result_path, payload)

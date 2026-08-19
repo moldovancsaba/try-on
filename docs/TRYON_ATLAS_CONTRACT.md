@@ -64,9 +64,28 @@ Optional request fields:
   `mask_mode='expose_arms'` instead (try-on#38), which keeps the arm regions inside
   the edit mask so the model synthesizes bare skin over any source-photo sleeves,
   with `sleeve_length` forced to `'default'` (the two are mutually exclusive).
-- `request.outfitBottomLeatherSuitId` — reserved by try-on#39 (two-pass outfit
-  rendering); presence marks the job as a two-piece outfit whose `leatherSuitId` is
-  the `top` piece. See that issue's section below once implemented.
+- `request.outfitBottomLeatherSuitId` — presence marks the job as a **two-piece
+  outfit** (try-on#39): `leatherSuitId` is the `top` piece, this field is the
+  `bottom` piece. Additive: a job without it is a normal single-garment job,
+  byte-identical behavior to before. Rules the worker enforces at claim time,
+  each failing fast with a stable terminal error (category
+  `invalid_job_contract`) before any render spend:
+  - `outfit_top_type_mismatch` — `leatherSuitId`'s catalog `garmentType` must be `top`.
+  - `outfit_bottom_type_mismatch` — this field's catalog `garmentType` must be
+    `bottom` (also raised for a missing/inactive bottom, or the same id as the top).
+  - `outfit_requires_local_provider` — outfit jobs run on the local provider only;
+    Segmind/fal/Google-Edge profiles are rejected.
+  Rendering is two sequential local passes — top (Upper) on the person photo,
+  then bottom (Lower) on pass 1's output — with a **fixed top-first order**
+  (the bottom's Lower mask cannot damage the rendered top; the reverse order
+  would let an Upper mask repaint the waistband region). One job, one result:
+  the intermediate pass-1 image never reaches ImgBB, the completion callback,
+  or any Atlas field, and is deleted on every exit path; any pass failing
+  retries the whole job from pass 1. Camera-side requirement: the request
+  dedup hash MUST incorporate this field when present, or a top-only job and
+  a top+bottom job for the same submission would collide (implemented in
+  camera#116). Consumers keyed on `request.leatherSuitId` (usage counts,
+  admin queue views) see the top piece only — a documented tradeoff.
 
 Optional result fields:
 

@@ -159,6 +159,16 @@ setup exactly as before. Every dispatch logs one line —
 `[tryon-worker] job=<id> category=... sleeve=... mask=... source=garment_type|setup` —
 so a wrong render is diagnosable from the worker log alone.
 
+Two-piece outfits (try-on#39, local provider only): a job whose
+`request.outfitBottomLeatherSuitId` is set renders as two sequential local
+passes — the top (`request.leatherSuitId`, must be a `top`-type garment,
+Upper category) on the person photo, then the bottom (must be `bottom`-type,
+Lower category) on pass 1's output. The order is fixed top-first and the job
+is atomic: one result, no intermediate ever published, any pass failing
+retries the whole job. Type/provider violations fail fast with named
+`outfit_*` errors before any render spend. Each pass logs
+`[tryon-worker] job=<id> pass=<n> garment=<id> category=... took=<s>`.
+
 Bare arms for sleeveless garments (try-on#38, local provider only): a
 `jersey`/`top` with `sleeveStyle='sleeveless'` renders with the local
 pipeline's `mask_mode='expose_arms'` — the arm regions stay INSIDE the edit
