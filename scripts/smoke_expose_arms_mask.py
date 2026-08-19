@@ -131,12 +131,36 @@ def main() -> int:
     if not np.array_equal(expose_mask, default_mask):
         failures.append("expose_arms should be identical to default for part='upper' (arms are default dense parts)")
 
+    failures.extend(check_api_call_chain())
+
     for line in failures:
         print(f"FAIL {line}")
     if failures:
         return 1
     print("smoke_expose_arms_mask: ok  strong-protect inviolable, arms in under expose_arms, shrink untouched, exclusion holds")
     return 0
+
+
+def check_api_call_chain() -> list[str]:
+    """try-on#38 regression guard: app.py re-defines _inference at module
+    level (a High-Quality wrapper that shadows the original at import time).
+    The API handler calls _inference(mask_mode=...), so EVERY module-level
+    _inference definition must accept mask_mode - a wrapper that drops the
+    kwarg 500s every API render (caught live 2026-08-19)."""
+    import ast
+    from pathlib import Path
+
+    app_src = (Path(__file__).resolve().parents[1] / "app.py").read_text()
+    tree = ast.parse(app_src)
+    failures = []
+    defs = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "_inference"]
+    if not defs:
+        return ["app.py has no module-level _inference"]
+    for node in defs:
+        names = [a.arg for a in node.args.args] + [a.arg for a in node.args.kwonlyargs]
+        if "mask_mode" not in names:
+            failures.append(f"_inference at app.py:{node.lineno} does not accept mask_mode - the API handler passes it")
+    return failures
 
 
 if __name__ == "__main__":

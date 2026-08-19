@@ -2374,6 +2374,8 @@ def _inference(
     enable_deep_texture,
     warp_strength,
     progress=gr.Progress(),
+    *,
+    mask_mode="default",
 ):
     import traceback
 
@@ -2408,6 +2410,7 @@ def _inference(
             enable_deep_texture,
             warp_strength,
             progress=progress,
+            mask_mode=mask_mode,
         )
     except Exception as exc:
         print(f"[try-on] Inference failed: {exc}")
