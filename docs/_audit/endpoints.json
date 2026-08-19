@@ -1,14 +1,14 @@
 {
  "_meta": {
-  "generated": "2026-08-19T16:53:11+00:00",
+  "generated": "2026-08-19T23:52:52+00:00",
   "repo": "try-on",
-  "head": "e2c92c6",
+  "head": "4ac5c68",
   "counts": {
    "endpoints": 31,
    "collections": 3,
    "env": 47,
    "outbound-hosts": 6,
-   "docs": 15
+   "docs": 19
   }
  },
  "items": [
@@ -17,7 +17,7 @@
    "methods": [
     "GET"
    ],
-   "file": "app.py:1478",
+   "file": "app.py:1495",
    "auth_markers": [],
    "no_auth_marker": true
   },
@@ -26,7 +26,7 @@
    "methods": [
     "GET"
    ],
-   "file": "app.py:2088",
+   "file": "app.py:2110",
    "auth_markers": [],
    "no_auth_marker": true
   },
@@ -35,7 +35,7 @@
    "methods": [
     "POST"
    ],
-   "file": "app.py:2140",
+   "file": "app.py:2162",
    "auth_markers": [],
    "no_auth_marker": true
   },
@@ -44,7 +44,7 @@
    "methods": [
     "POST"
    ],
-   "file": "app.py:2148",
+   "file": "app.py:2170",
    "auth_markers": [],
    "no_auth_marker": true
   },
@@ -53,7 +53,7 @@
    "methods": [
     "POST"
    ],
-   "file": "app.py:2116",
+   "file": "app.py:2138",
    "auth_markers": [],
    "no_auth_marker": true
   },
@@ -62,7 +62,7 @@
    "methods": [
     "POST"
    ],
-   "file": "app.py:2132",
+   "file": "app.py:2154",
    "auth_markers": [],
    "no_auth_marker": true
   },
@@ -71,7 +71,7 @@
    "methods": [
     "POST"
    ],
-   "file": "app.py:2136",
+   "file": "app.py:2158",
    "auth_markers": [],
    "no_auth_marker": true
   },
@@ -80,7 +80,7 @@
    "methods": [
     "POST"
    ],
-   "file": "app.py:2104",
+   "file": "app.py:2126",
    "auth_markers": [],
    "no_auth_marker": true
   },
@@ -89,7 +89,7 @@
    "methods": [
     "GET"
    ],
-   "file": "app.py:2100",
+   "file": "app.py:2122",
    "auth_markers": [],
    "no_auth_marker": true
   },
@@ -98,7 +98,7 @@
    "methods": [
     "POST"
    ],
-   "file": "app.py:2120",
+   "file": "app.py:2142",
    "auth_markers": [],
    "no_auth_marker": true
   },
@@ -107,7 +107,7 @@
    "methods": [
     "POST"
    ],
-   "file": "app.py:2124",
+   "file": "app.py:2146",
    "auth_markers": [],
    "no_auth_marker": true
   },
@@ -116,7 +116,7 @@
    "methods": [
     "POST"
    ],
-   "file": "app.py:2128",
+   "file": "app.py:2150",
    "auth_markers": [],
    "no_auth_marker": true
   },
@@ -125,7 +125,7 @@
    "methods": [
     "GET"
    ],
-   "file": "app.py:2152",
+   "file": "app.py:2174",
    "auth_markers": [],
    "no_auth_marker": true
   },
@@ -134,7 +134,7 @@
    "methods": [
     "GET"
    ],
-   "file": "app.py:2156",
+   "file": "app.py:2178",
    "auth_markers": [],
    "no_auth_marker": true
   },
@@ -143,7 +143,7 @@
    "methods": [
     "GET"
    ],
-   "file": "app.py:2096",
+   "file": "app.py:2118",
    "auth_markers": [],
    "no_auth_marker": true
   },
@@ -152,7 +152,7 @@
    "methods": [
     "POST"
    ],
-   "file": "app.py:2144",
+   "file": "app.py:2166",
    "auth_markers": [],
    "no_auth_marker": true
   },
@@ -161,7 +161,7 @@
    "methods": [
     "GET"
    ],
-   "file": "app.py:2092",
+   "file": "app.py:2114",
    "auth_markers": [],
    "no_auth_marker": true
   },
@@ -170,7 +170,7 @@
    "methods": [
     "POST"
    ],
-   "file": "app.py:2345",
+   "file": "app.py:2368",
    "auth_markers": [],
    "no_auth_marker": true
   },
@@ -179,7 +179,7 @@
    "methods": [
     "POST"
    ],
-   "file": "app.py:1944",
+   "file": "app.py:1966",
    "auth_markers": [],
    "no_auth_marker": true
   },
@@ -188,7 +188,7 @@
    "methods": [
     "GET"
    ],
-   "file": "app.py:1973",
+   "file": "app.py:1995",
    "auth_markers": [],
    "no_auth_marker": true
   },
@@ -197,7 +197,7 @@
    "methods": [
     "POST"
    ],
-   "file": "app.py:2037",
+   "file": "app.py:2059",
    "auth_markers": [],
    "no_auth_marker": true
   },
@@ -206,7 +206,7 @@
    "methods": [
     "POST"
    ],
-   "file": "app.py:2231",
+   "file": "app.py:2253",
    "auth_markers": [],
    "no_auth_marker": true
   },
@@ -215,7 +215,7 @@
    "methods": [
     "POST"
    ],
-   "file": "app.py:2198",
+   "file": "app.py:2220",
    "auth_markers": [],
    "no_auth_marker": true
   },
@@ -224,7 +224,7 @@
    "methods": [
     "GET"
    ],
-   "file": "app.py:2165",
+   "file": "app.py:2187",
    "auth_markers": [],
    "no_auth_marker": true
   },
@@ -233,7 +233,7 @@
    "methods": [
     "POST"
    ],
-   "file": "app.py:2169",
+   "file": "app.py:2191",
    "auth_markers": [],
    "no_auth_marker": true
   },
@@ -242,7 +242,7 @@
    "methods": [
     "GET"
    ],
-   "file": "app.py:2161",
+   "file": "app.py:2183",
    "auth_markers": [],
    "no_auth_marker": true
   },
@@ -251,7 +251,7 @@
    "methods": [
     "GET"
    ],
-   "file": "app.py:1486",
+   "file": "app.py:1503",
    "auth_markers": [],
    "no_auth_marker": true
   },
@@ -260,7 +260,7 @@
    "methods": [
     "POST"
    ],
-   "file": "app.py:1506",
+   "file": "app.py:1523",
    "auth_markers": [],
    "no_auth_marker": true
   },
@@ -269,7 +269,7 @@
    "methods": [
     "GET"
    ],
-   "file": "app.py:1482",
+   "file": "app.py:1499",
    "auth_markers": [],
    "no_auth_marker": true
   },
@@ -278,7 +278,7 @@
    "methods": [
     "POST"
    ],
-   "file": "app.py:1498",
+   "file": "app.py:1515",
    "auth_markers": [],
    "no_auth_marker": true
   },
@@ -287,7 +287,7 @@
    "methods": [
     "GET"
    ],
-   "file": "app.py:1494",
+   "file": "app.py:1511",
    "auth_markers": [],
    "no_auth_marker": true
   }

@@ -1,14 +1,14 @@
 {
  "_meta": {
-  "generated": "2026-08-19T16:53:11+00:00",
+  "generated": "2026-08-19T23:52:52+00:00",
   "repo": "try-on",
-  "head": "e2c92c6",
+  "head": "4ac5c68",
   "counts": {
    "endpoints": 31,
    "collections": 3,
    "env": 47,
    "outbound-hosts": 6,
-   "docs": 15
+   "docs": 19
   }
  },
  "items": [
@@ -57,6 +57,10 @@
    "title": "Release Notes"
   },
   {
+   "file": "docs/RUNBOOK.md",
+   "title": "try-on operations runbook"
+  },
+  {
    "file": "docs/TRYON_ATLAS_CONTRACT.md",
    "title": "Try-On Atlas Contract"
   },
@@ -71,6 +75,18 @@
   {
    "file": "docs/TRYON_WORKER_FAILURE_CONTRACT_PLAN.md",
    "title": "Try-On Worker Failure Contract Implementation Plan"
+  },
+  {
+   "file": "docs/_audit/README.md",
+   "title": "Fleet audit artifacts"
+  },
+  {
+   "file": "docs/_audit/api-reference.md",
+   "title": "try-on API Reference"
+  },
+  {
+   "file": "docs/_audit/drift-register.md",
+   "title": "try-on drift register \u2014 fleet audit P3, first edition"
   }
  ]
 }
