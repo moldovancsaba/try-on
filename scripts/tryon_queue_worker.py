@@ -82,6 +82,55 @@ FAL_SETUP_ID_ALIASES = {
     FAL_SETUP_ID,
 }
 
+# WHAT: garment-identity-driven render-parameter resolution (try-on#37).
+#     Camera stamps request.garmentType/sleeveStyle on every job
+#     (moldovancsaba/camera#115); when present, the garment's own type wins
+#     over whatever category the operator-picked setup preset hardcodes.
+# WHY these short alias strings, not the local UI's long enum strings: every
+#     provider normalizer accepts them correctly - app.py's
+#     _CATEGORY_ALIASES maps 'upper'/'lower'/'dresses' to the right enum,
+#     _normalize_segmind_category maps them to upper_body/lower_body/dresses,
+#     and _coerce_fal_category maps them to tops/bottoms/one-pieces. The
+#     long strings would silently break Segmind's lower-body case (its
+#     normalizer doesn't know "lower (jeans, shorts, skirts)" and would
+#     default to upper_body).
+GARMENT_TYPE_TO_CATEGORY = {
+    "motorsport_suit": "dresses",  # -> Full-Body / dresses / one-pieces
+    "jersey": "upper",             # -> Upper / upper_body / tops
+    "top": "upper",
+    "bottom": "lower",             # -> Lower / lower_body / bottoms
+}
+SLEEVE_STYLE_TO_SLEEVE_LENGTH = {
+    "sleeveless": "sleeveless",
+    "short_sleeve": "short_sleeve",
+    "long_sleeve": "default",
+}
+
+
+def resolve_render_params(request: dict[str, Any], setup_payload: dict[str, Any]) -> dict[str, Any]:
+    """Job-level garment identity wins over the operator preset; a job with
+    no garmentType (every job created before camera#115) resolves exactly as
+    today. Returns {'category', 'sleeve_length', 'source'} where source is
+    'garment_type' or 'setup' - logged once per dispatch for diagnosability.
+    An unrecognized future garmentType logs and falls back to the setup,
+    never crashes the worker loop."""
+    garment_type = str(request.get("garmentType") or "").strip()
+    if garment_type in GARMENT_TYPE_TO_CATEGORY:
+        sleeve_style = str(request.get("sleeveStyle") or "").strip()
+        return {
+            "category": GARMENT_TYPE_TO_CATEGORY[garment_type],
+            "sleeve_length": SLEEVE_STYLE_TO_SLEEVE_LENGTH.get(sleeve_style)
+            or str(setup_payload.get("sleeve_length") or "default"),
+            "source": "garment_type",
+        }
+    if garment_type:
+        print(f"[tryon-worker] unrecognized garmentType={garment_type!r}, falling back to setup category", flush=True)
+    return {
+        "category": str(setup_payload.get("category") or "") or None,
+        "sleeve_length": str(setup_payload.get("sleeve_length") or "") or None,
+        "source": "setup",
+    }
+
 
 def now_iso() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
@@ -2335,6 +2384,20 @@ class TryOnQueueWorker:
 
             setup_payload, setup_source = self.resolve_setup(job)
             payload = setup_payload["payload"]
+            # try-on#37: the garment's own type (snapshotted onto the job by
+            # camera#115) overrides the setup preset's category. Mutating the
+            # payload here covers every provider path at once - the Segmind
+            # and fal coercers both read payload['category'] downstream.
+            render_params = resolve_render_params(job.get("request") or {}, payload)
+            if render_params["category"]:
+                payload["category"] = render_params["category"]
+            if render_params["sleeve_length"]:
+                payload["sleeve_length"] = render_params["sleeve_length"]
+            print(
+                f"[tryon-worker] job={job['jobId']} category={payload.get('category')!r} "
+                f"sleeve={payload.get('sleeve_length')!r} source={render_params['source']}",
+                flush=True,
+            )
             resolved_setup_id = setup_payload["setupId"]
             resolved_setup_name = setup_payload.get("name")
             resolved_setup_revision = setup_payload.get("revision")

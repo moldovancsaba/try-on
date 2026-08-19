@@ -47,6 +47,21 @@ Optional request fields:
 - `request.setupId`
 - `request.cameraId`
 - `request.processingProfile`
+- `request.garmentType` — `motorsport_suit | jersey | top | bottom`; a snapshot of the
+  selected garment's type taken by Camera at job creation (camera#115). When present,
+  the worker's render-category resolution uses it in place of the setup preset's
+  `category` (try-on#37): `motorsport_suit → dresses/Full-Body/one-pieces`,
+  `jersey/top → upper/tops`, `bottom → lower/bottoms`, mapped per provider. Absent
+  (every job created before camera#115) ⇒ setup-driven resolution, exactly as before.
+  An unrecognized value is logged and treated as absent — never a validation failure,
+  so a newer Camera can ship a new type before this worker learns it.
+- `request.sleeveStyle` — `sleeveless | short_sleeve | long_sleeve`; snapshot of the
+  garment's sleeve style. Only consulted when `garmentType` is present and recognized;
+  maps onto the local pipeline's `sleeve_length` parameter
+  (`sleeveless→sleeveless`, `short_sleeve→short_sleeve`, `long_sleeve→default`).
+- `request.outfitBottomLeatherSuitId` — reserved by try-on#39 (two-pass outfit
+  rendering); presence marks the job as a two-piece outfit whose `leatherSuitId` is
+  the `top` piece. See that issue's section below once implemented.
 
 Optional result fields:
 
@@ -77,6 +92,15 @@ Required fields:
   "updatedAt": "2026-06-06T00:00:00Z"
 }
 ```
+
+Optional fields (Camera-authored, additive as of camera#115 — no schemaVersion bump):
+
+- `garmentType` — `motorsport_suit | jersey | top | bottom`. Absent ⇒ the record
+  predates the field, and every such record is in practice a motorsport suit (the
+  only product this system ever had before garment types); consumers must treat
+  absent as `motorsport_suit`.
+- `sleeveStyle` — `sleeveless | short_sleeve | long_sleeve | null`; only meaningful
+  for `jersey`/`top`.
 
 Asset resolution order:
 

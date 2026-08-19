@@ -148,6 +148,17 @@ Event-level setup selection (recommended):
 4. Atlas stores only setup selection metadata (`setupId`, name, defaults, ranking); setup payloads live in local catalog file (`.config/tryon_setups.json`).
 5. If a setup is unknown locally, the job falls back to the local fallback profile.
 
+Garment-type render resolution (try-on#37): when a job carries
+`request.garmentType` (snapshotted from the garment catalog by Camera —
+camera#115), the garment's own type overrides the setup preset's `category`
+across all three providers (`motorsport_suit → Full-Body/dresses/one-pieces`,
+`jersey`/`top → Upper/tops`, `bottom → Lower/bottoms`), and
+`request.sleeveStyle` maps onto the local pipeline's `sleeve_length`. Jobs
+without the field (everything created before camera#115) resolve from the
+setup exactly as before. Every dispatch logs one line —
+`[tryon-worker] job=<id> category=... sleeve=... source=garment_type|setup` —
+so a wrong render is diagnosable from the worker log alone.
+
 Required environment variables. Provider names are genericized here — `EXTERNAL_PROVIDER_*`
 and `OPTIONAL_PROVIDER_*` are placeholders, not variables the worker reads. Copy
 `.env.tryon-worker.example` for the literal names, and note that
