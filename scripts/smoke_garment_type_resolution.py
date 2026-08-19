@@ -166,6 +166,34 @@ def main() -> int:
     if "sleeveless jersey" in des or "short sleeves ending" in des:
         failures.append("segmind garment_des must not carry sleeve constraints for default renders")
 
+
+    # --- fal rerouting (live decision 2026-08-19): garment-typed jerseys/
+    # tops/bottoms leave Segmind for FASHN; motorsport suits and explicit
+    # local/google setups stay put ---
+    from tryon_queue_worker import should_reroute_garment_typed_render_to_fal, _image_data_uri
+
+    if not should_reroute_garment_typed_render_to_fal("garment_type", "jersey", "segmind_idm_vton"):
+        failures.append("jersey on segmind must reroute to fal")
+    if should_reroute_garment_typed_render_to_fal("garment_type", "motorsport_suit", "segmind_idm_vton"):
+        failures.append("motorsport suit must NOT reroute to fal")
+    if should_reroute_garment_typed_render_to_fal("setup", "jersey", "segmind_idm_vton"):
+        failures.append("setup-derived render must NOT reroute to fal")
+    if should_reroute_garment_typed_render_to_fal("garment_type", "jersey", "motogp_leather_magic"):
+        failures.append("local-profile render must NOT reroute to fal")
+
+    # --- data URIs replace ImgBB for fal inputs (ImgBB outage 2026-08-19) ---
+    import base64 as _b64, io as _io, tempfile
+    from PIL import Image as _Img
+    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+        _Img.new("RGBA", (8, 8), (255, 0, 0, 128)).save(tmp.name)
+        uri = _image_data_uri(Path(tmp.name))
+    if not uri.startswith("data:image/png;base64,"):
+        failures.append(f"alpha image data URI wrong prefix: {uri[:40]}")
+    else:
+        decoded = _Img.open(_io.BytesIO(_b64.b64decode(uri.split(",", 1)[1])))
+        if decoded.size != (8, 8):
+            failures.append("data URI roundtrip lost the image")
+
     for line in failures:
         print(f"FAIL {line}")
     if failures:

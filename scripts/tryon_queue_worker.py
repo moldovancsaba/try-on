@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import io
 import json
 import os
 import shutil
@@ -416,6 +417,45 @@ def _normalize_segmind_category(value: Any) -> str:
 def _has_alpha_channel(image_path: Path) -> bool:
     with Image.open(image_path) as image:
         return _image_has_alpha_channel(image)
+
+
+def _image_data_uri(image_path: Path, max_side: int = 1280) -> str:
+    """Inline base64 data URI for providers that accept one (fal/FASHN does).
+
+    Bypasses ImgBB entirely: a live ImgBB degradation (2026-08-19, i.ibb.co
+    read timeouts) stalled every render whose provider had to fetch inputs
+    from ImgBB URLs. Inputs are downscaled to max_side to keep the request
+    payload small - providers work at ~1MP anyway.
+    """
+    with Image.open(image_path) as image:
+        image.thumbnail((max_side, max_side))
+        buffer = io.BytesIO()
+        if image.mode in ("RGBA", "LA") or "transparency" in image.info:
+            image.save(buffer, "PNG")
+            mime = "image/png"
+        else:
+            image.convert("RGB").save(buffer, "JPEG", quality=92)
+            mime = "image/jpeg"
+    return f"data:{mime};base64,{base64.b64encode(buffer.getvalue()).decode()}"
+
+
+def should_reroute_garment_typed_render_to_fal(render_source: str, garment_type: str, processing_profile: str) -> bool:
+    """try-on#37 follow-up (2026-08-19): garment-typed jerseys/tops/bottoms
+    render on FASHN v1.6 (fal) instead of Segmind IDM-VTON.
+
+    Verified side by side on live submissions: IDM-VTON mangles garment text
+    ("DEBRECEN" -> "DRRGEIN") and paints sleeves/pants it should not, while
+    FASHN kept the wearer's own lower body, rendered the garment's real
+    sleeve design, and reproduced the lettering exactly - the render the
+    user signed off on. Motorsport suits keep their configured pipeline, and
+    only Segmind-profile jobs are rerouted (an explicit local/google setup
+    choice is respected).
+    """
+    return (
+        render_source == "garment_type"
+        and garment_type != "motorsport_suit"
+        and processing_profile == PROCESSING_PROFILE_SEGMIND_IDM_VTON
+    )
 
 
 def _apply_segmind_transparent_png_rules(request_payload: dict[str, Any], payload: dict[str, Any]) -> None:
@@ -2130,9 +2170,9 @@ class TryOnQueueWorker:
     ) -> dict[str, Any]:
         """Render through fal's queue API and write the result to `output_path`.
 
-        fal takes image URLs, not uploads, so both inputs are pushed through ImgBB
-        first — meaning a fal render costs two extra public uploads and fails if ImgBB
-        is down. The submit call uses a deliberately short timeout (10-30s) because it
+        Inputs go inline as base64 data URIs (_image_data_uri) - no ImgBB
+        round-trip, so an image-host outage cannot stall fal renders. The
+        submit call uses a deliberately short timeout (10-30s) because it
         only enqueues; the long wait happens in _wait_for_fal_result against the status
         url, which is what the full fal timeout applies to.
 
@@ -2145,14 +2185,11 @@ class TryOnQueueWorker:
         if not self.config.fal_base_url or not self.config.fal_tryon_model:
             raise RuntimeError("fal_api_config_missing")
 
-        person_image_upload = self.upload_to_imgbb(person_input_path)
-        garment_image_upload = self.upload_to_imgbb(garment_input_path)
-
         request_payload = self._coerce_fal_payload(
             {
                 **payload,
-                "model_image": person_image_upload["imageUrl"],
-                "garment_image": garment_image_upload["imageUrl"],
+                "model_image": _image_data_uri(person_input_path),
+                "garment_image": _image_data_uri(garment_input_path),
             }
         )
 
@@ -2550,6 +2587,15 @@ class TryOnQueueWorker:
                 processing_profile = PROCESSING_PROFILE_FAL_TRYON
                 requested_processing_profile = processing_profile
                 payload["processing_profile"] = processing_profile
+            if should_reroute_garment_typed_render_to_fal(
+                render_params["source"],
+                str((job.get("request") or {}).get("garmentType") or "").strip().lower(),
+                processing_profile,
+            ):
+                processing_profile = PROCESSING_PROFILE_FAL_TRYON
+                requested_processing_profile = processing_profile
+                payload["processing_profile"] = processing_profile
+                print(f"[tryon-worker] job={job_id} garment-typed render rerouted segmind->fal (FASHN)", flush=True)
             if processing_profile == PROCESSING_PROFILE_FAL_TRYON and not self._is_fal_session_enabled():
                 fallback_profile = self._fallback_profile_for_fal()
                 if fallback_profile != PROCESSING_PROFILE_FAL_TRYON:

@@ -55,6 +55,14 @@ Optional request fields:
   (every job created before camera#115) ⇒ setup-driven resolution, exactly as before.
   An unrecognized value is logged and treated as absent — never a validation failure,
   so a newer Camera can ship a new type before this worker learns it.
+  **Provider routing (2026-08-19):** a garment-typed `jersey`/`top`/`bottom` job whose
+  resolved setup profile is `segmind_idm_vton` is rerouted to `fal_tryon` (FASHN v1.6)
+  by the worker — verified side by side on live submissions, FASHN preserves garment
+  lettering and the wearer's own lower body where IDM-VTON does not. `motorsport_suit`
+  jobs and setups that explicitly choose the local or google-edge pipeline are never
+  rerouted, and if fal is unconfigured the job falls back through the existing
+  fal-fallback path. fal inputs travel inline as base64 data URIs (no ImgBB
+  dependency).
 - `request.sleeveStyle` — `sleeveless | short_sleeve | long_sleeve`; snapshot of the
   garment's sleeve style. Only consulted when `garmentType` is present and recognized.
   `short_sleeve` maps onto the local pipeline's `sleeve_length='short_sleeve'`,
