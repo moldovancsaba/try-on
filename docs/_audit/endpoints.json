@@ -1,0 +1,295 @@
+{
+ "_meta": {
+  "generated": "2026-08-19T16:53:11+00:00",
+  "repo": "try-on",
+  "head": "e2c92c6",
+  "counts": {
+   "endpoints": 31,
+   "collections": 3,
+   "env": 47,
+   "outbound-hosts": 6,
+   "docs": 15
+  }
+ },
+ "items": [
+  {
+   "path": "/",
+   "methods": [
+    "GET"
+   ],
+   "file": "app.py:1478",
+   "auth_markers": [],
+   "no_auth_marker": true
+  },
+  {
+   "path": "/api/capabilities",
+   "methods": [
+    "GET"
+   ],
+   "file": "app.py:2088",
+   "auth_markers": [],
+   "no_auth_marker": true
+  },
+  {
+   "path": "/api/local-ai/editing/inpaint",
+   "methods": [
+    "POST"
+   ],
+   "file": "app.py:2140",
+   "auth_markers": [],
+   "no_auth_marker": true
+  },
+  {
+   "path": "/api/local-ai/events/{event_id}/social-stills",
+   "methods": [
+    "POST"
+   ],
+   "file": "app.py:2148",
+   "auth_markers": [],
+   "no_auth_marker": true
+  },
+  {
+   "path": "/api/local-ai/garments/isolate",
+   "methods": [
+    "POST"
+   ],
+   "file": "app.py:2116",
+   "auth_markers": [],
+   "no_auth_marker": true
+  },
+  {
+   "path": "/api/local-ai/google-edge/analyze",
+   "methods": [
+    "POST"
+   ],
+   "file": "app.py:2132",
+   "auth_markers": [],
+   "no_auth_marker": true
+  },
+  {
+   "path": "/api/local-ai/google-edge/tryon",
+   "methods": [
+    "POST"
+   ],
+   "file": "app.py:2136",
+   "auth_markers": [],
+   "no_auth_marker": true
+  },
+  {
+   "path": "/api/local-ai/jobs",
+   "methods": [
+    "POST"
+   ],
+   "file": "app.py:2104",
+   "auth_markers": [],
+   "no_auth_marker": true
+  },
+  {
+   "path": "/api/local-ai/model-packs",
+   "methods": [
+    "GET"
+   ],
+   "file": "app.py:2100",
+   "auth_markers": [],
+   "no_auth_marker": true
+  },
+  {
+   "path": "/api/local-ai/product-photo/cleanup",
+   "methods": [
+    "POST"
+   ],
+   "file": "app.py:2120",
+   "auth_markers": [],
+   "no_auth_marker": true
+  },
+  {
+   "path": "/api/local-ai/quality/brand-safety",
+   "methods": [
+    "POST"
+   ],
+   "file": "app.py:2124",
+   "auth_markers": [],
+   "no_auth_marker": true
+  },
+  {
+   "path": "/api/local-ai/quality/tryon-gate",
+   "methods": [
+    "POST"
+   ],
+   "file": "app.py:2128",
+   "auth_markers": [],
+   "no_auth_marker": true
+  },
+  {
+   "path": "/api/local-ai/reports",
+   "methods": [
+    "GET"
+   ],
+   "file": "app.py:2152",
+   "auth_markers": [],
+   "no_auth_marker": true
+  },
+  {
+   "path": "/api/local-ai/reports/export",
+   "methods": [
+    "GET"
+   ],
+   "file": "app.py:2156",
+   "auth_markers": [],
+   "no_auth_marker": true
+  },
+  {
+   "path": "/api/local-ai/services",
+   "methods": [
+    "GET"
+   ],
+   "file": "app.py:2096",
+   "auth_markers": [],
+   "no_auth_marker": true
+  },
+  {
+   "path": "/api/local-ai/variants/generate",
+   "methods": [
+    "POST"
+   ],
+   "file": "app.py:2144",
+   "auth_markers": [],
+   "no_auth_marker": true
+  },
+  {
+   "path": "/api/quality-contracts",
+   "methods": [
+    "GET"
+   ],
+   "file": "app.py:2092",
+   "auth_markers": [],
+   "no_auth_marker": true
+  },
+  {
+   "path": "/api/tryon/jobs/{job_id}/retry",
+   "methods": [
+    "POST"
+   ],
+   "file": "app.py:2345",
+   "auth_markers": [],
+   "no_auth_marker": true
+  },
+  {
+   "path": "/api/tryon/run",
+   "methods": [
+    "POST"
+   ],
+   "file": "app.py:1944",
+   "auth_markers": [],
+   "no_auth_marker": true
+  },
+  {
+   "path": "/api/tryon/setups",
+   "methods": [
+    "GET"
+   ],
+   "file": "app.py:1973",
+   "auth_markers": [],
+   "no_auth_marker": true
+  },
+  {
+   "path": "/api/tryon/setups/{setupId}/use",
+   "methods": [
+    "POST"
+   ],
+   "file": "app.py:2037",
+   "auth_markers": [],
+   "no_auth_marker": true
+  },
+  {
+   "path": "/api/worker/jobs/{job_id}/retry",
+   "methods": [
+    "POST"
+   ],
+   "file": "app.py:2231",
+   "auth_markers": [],
+   "no_auth_marker": true
+  },
+  {
+   "path": "/api/worker/service-action",
+   "methods": [
+    "POST"
+   ],
+   "file": "app.py:2198",
+   "auth_markers": [],
+   "no_auth_marker": true
+  },
+  {
+   "path": "/api/worker/settings",
+   "methods": [
+    "GET"
+   ],
+   "file": "app.py:2165",
+   "auth_markers": [],
+   "no_auth_marker": true
+  },
+  {
+   "path": "/api/worker/settings",
+   "methods": [
+    "POST"
+   ],
+   "file": "app.py:2169",
+   "auth_markers": [],
+   "no_auth_marker": true
+  },
+  {
+   "path": "/api/worker/status",
+   "methods": [
+    "GET"
+   ],
+   "file": "app.py:2161",
+   "auth_markers": [],
+   "no_auth_marker": true
+  },
+  {
+   "path": "/garments",
+   "methods": [
+    "GET"
+   ],
+   "file": "app.py:1486",
+   "auth_markers": [],
+   "no_auth_marker": true
+  },
+  {
+   "path": "/save_package",
+   "methods": [
+    "POST"
+   ],
+   "file": "app.py:1506",
+   "auth_markers": [],
+   "no_auth_marker": true
+  },
+  {
+   "path": "/set-garment",
+   "methods": [
+    "GET"
+   ],
+   "file": "app.py:1482",
+   "auth_markers": [],
+   "no_auth_marker": true
+  },
+  {
+   "path": "/upload_garment",
+   "methods": [
+    "POST"
+   ],
+   "file": "app.py:1498",
+   "auth_markers": [],
+   "no_auth_marker": true
+  },
+  {
+   "path": "/worker-control",
+   "methods": [
+    "GET"
+   ],
+   "file": "app.py:1494",
+   "auth_markers": [],
+   "no_auth_marker": true
+  }
+ ]
+}

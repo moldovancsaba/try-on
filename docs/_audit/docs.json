@@ -1,0 +1,76 @@
+{
+ "_meta": {
+  "generated": "2026-08-19T16:53:11+00:00",
+  "repo": "try-on",
+  "head": "e2c92c6",
+  "counts": {
+   "endpoints": 31,
+   "collections": 3,
+   "env": 47,
+   "outbound-hosts": 6,
+   "docs": 15
+  }
+ },
+ "items": [
+  {
+   "file": ".pytest_cache/README.md",
+   "title": "pytest cache directory #"
+  },
+  {
+   "file": "DEVELOPMENT_MANTRA.md",
+   "title": "Try-On Studio Development Mantra"
+  },
+  {
+   "file": "HANDOVER.md",
+   "title": "Handover \u2014 Try-On Studio"
+  },
+  {
+   "file": "README.md",
+   "title": "Try-On Studio"
+  },
+  {
+   "file": "docs/CODE_COMMENT_STANDARD.md",
+   "title": "Code Comment Standard"
+  },
+  {
+   "file": "docs/GDS_LOCAL_ADOPTION.md",
+   "title": "GDS local adoption notes"
+  },
+  {
+   "file": "docs/LINUX_SUPPORT.md",
+   "title": "Linux Support"
+  },
+  {
+   "file": "docs/LOCAL_AI_SERVICES.md",
+   "title": "Local AI Services LLD"
+  },
+  {
+   "file": "docs/LOCAL_AI_SERVICES_USER_GUIDE.md",
+   "title": "Local AI Services User Guide"
+  },
+  {
+   "file": "docs/LOCAL_TRYON_MODEL_RESEARCH.md",
+   "title": "Local Try-On Model Research"
+  },
+  {
+   "file": "docs/RELEASE_NOTES.md",
+   "title": "Release Notes"
+  },
+  {
+   "file": "docs/TRYON_ATLAS_CONTRACT.md",
+   "title": "Try-On Atlas Contract"
+  },
+  {
+   "file": "docs/TRYON_CRITICAL_INFRASTRUCTURE.md",
+   "title": "Try-On Critical Infrastructure LLD and Operations Guide"
+  },
+  {
+   "file": "docs/TRYON_VETTING_WORKFLOW_PLAN.md",
+   "title": "Try-On Vetting Workflow Implementation Plan"
+  },
+  {
+   "file": "docs/TRYON_WORKER_FAILURE_CONTRACT_PLAN.md",
+   "title": "Try-On Worker Failure Contract Implementation Plan"
+  }
+ ]
+}
