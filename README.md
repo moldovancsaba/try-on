@@ -124,8 +124,8 @@ Flow:
 
 1. Camera saves the normal submission.
 2. Camera enqueues a `tryon_jobs` record in MongoDB Atlas.
-3. `scripts/tryon_queue_worker.py` polls Atlas, claims a queued job, downloads the source image, downloads the selected Camera-hosted leather suit asset, and calls `POST /api/tryon/run`.
-4. The worker uploads the generated image to ImgBB.
+3. `scripts/tryon_queue_worker.py` polls Atlas, claims a queued job, downloads the source image and the Camera-hosted garment asset, and renders via the resolved provider. Garment-typed jersey/top/bottom jobs on a Segmind setup are rerouted to FASHN v1.6 (fal); motorsport suits and local/google setups keep their pipeline. Provider inputs travel as base64 (fal data-URI, Segmind raw) — no ImgBB round-trip on the input path. Only local/motogp profiles call `POST /api/tryon/run`.
+4. The worker uploads the generated RESULT to ImgBB (results only; inputs are base64).
 5. The worker persists upload state, calls Camera’s internal completion endpoint, and only then marks the queue row `done`.
 6. Camera admins review and approve/reject the result before it becomes share-visible or slideshow-eligible.
 
@@ -136,7 +136,7 @@ Operational behavior:
 - the worker maintains lease heartbeats, stale-lease recovery, and local runtime diagnostics
 - the worker is intended to run as a macOS `launchd` service
 - the local app and queue worker are installed as one always-on service pair
-- the worker checks app readiness before claiming a job, so it does not take online work while models are still loading
+- the worker claims jobs FIFO and only checks local render-server readiness inside the local/google-edge render branches; Segmind and fal jobs dispatch without a readiness gate (a job claimed while models load burns an attempt and lands in retry)
 - the worker is single-instance; starting another worker exits cleanly instead of creating parallel queue consumers
 - the try-on API itself is single-task; a second generation request is rejected while one job is rendering
 
