@@ -1,15 +1,27 @@
 # Handover — Try-On Studio
 
-_Last updated: 2026-08-14_
+_Last updated: 2026-08-20_ (fleet version 12.2.0)
 
 Snapshot of where the repo is for the next person picking it up.
+
+## Recent work (2026-08-19 → 08-20)
+- Garment types v1: garmentType/sleeveStyle resolution, `expose_arms` mask mode,
+  two-pass outfit rendering (top→bottom).
+- Provider routing: garment-typed jersey/top/bottom on a Segmind setup reroute to
+  FASHN v1.6 (fal). Motorsport suits + local/google keep their pipeline.
+- Provider inputs are base64 now (fal data-URI, Segmind raw); ImgBB is results-only.
+- Transparent garments are white-composited before fal (FASHN flattens alpha to
+  black, which read as long sleeves on the Debrecen jersey).
+- Security (try-on#42): origin-guard middleware (cross-origin→403) + render output
+  path constrained to the project root.
+- Version unified to fleet 12.2.0. See `docs/RUNBOOK.md` for operations.
 
 ## Runtime status
 
 - Both launchd services healthy: `com.tryon.app-server` and `com.tryon.camera-worker`.
 - App serves `http://127.0.0.1:7860`; `GET /api/capabilities` reports all core vault
   assets ready.
-- Queue idle, provider scorecard clean — no failures, no open circuits.
+- Queue growth is unbounded (retention tracked in try-on#45); reconcile orphans via `scripts/tryon_infra_cli.py reconcile`.
 - Test suite green: 51 passed. `pytest` is now provisioned by `install.sh`.
 - Canary still has not been run; `.runtime/canary_status.json` is empty.
 
