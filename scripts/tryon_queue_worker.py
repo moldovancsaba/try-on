@@ -74,7 +74,6 @@ FAL_FULL_BODY_PROMPT = (
     "Do not repaint or recolor brand text. Keep face and body identity unchanged. "
     "If the garment has transparent pixels, treat alpha as a hard boundary and avoid filling, bleeding, or recoloring transparent regions."
 )
-FAL_FULL_BRAND_PROMPT = FAL_FULL_BODY_PROMPT
 FAL_MAX_BRAND_PRESERVATION_SEED = 42
 FAL_MODE_QUALITY = "quality"
 FAL_OUTPUT_FORMAT = "png"
@@ -2333,11 +2332,11 @@ class TryOnQueueWorker:
     ) -> dict[str, Any]:
         """Render through Segmind IDM-VTON and write the result to `output_path`.
 
-        Like the fal path, inputs go through ImgBB first because the provider takes
-        URLs. Transparent-PNG garments get special handling: the category is forced to
-        "dresses" with cropping and mask-only off, and the prompt gains an explicit
-        alpha-edge instruction, because IDM-VTON otherwise paints into the transparent
-        region and leaves a halo. That prompt text is load-bearing, not decoration.
+        Inputs are sent as raw base64 (no ImgBB round-trip) - see the body. For a
+        garment-typed job the category is honoured (category_source == "garment_type");
+        only setup-derived categories are forced to "dresses" for the transparent-PNG
+        halo workaround, which also adds an explicit alpha-edge prompt. That prompt
+        text is load-bearing, not decoration.
 
         Raises RuntimeError with a `segmind_*` code on failure.
         """

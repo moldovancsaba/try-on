@@ -2260,8 +2260,9 @@ if "fastapi_app" in globals():
         Retrying a live job would let two workers publish results for one submission.
 
         `target` picks the landing status: "queued" for immediate pickup, or
-        "retry_wait" with delayMinutes (0-1440) to hold it back. Attempt count is left
-        alone — an operator retry does not refill the automatic retry budget.
+        "retry_wait" with delayMinutes (0-1440) to hold it back. When resetAttempts is
+        true the attempt count is zeroed (refilling the retry budget); otherwise it is
+        left as-is. The response echoes resetAttempts.
         """
         runtime_state = load_worker_status(app_root=_ROOT)
         if str(runtime_state.get("currentJobId") or "") == job_id and _is_runtime_job_active(runtime_state):
