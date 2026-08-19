@@ -1400,7 +1400,24 @@ import shutil
 import json
 from pydantic import BaseModel, Field
 
-fastapi_app = FastAPI()
+fastapi_app = FastAPI(title="try-on", version="12.2.0")
+
+# SECURITY (try-on#42): the server binds 127.0.0.1 but browsers can reach
+# loopback, so a web page the operator visits could POST to this API. Reject
+# any request carrying a cross-origin Origin header. Requests with no Origin
+# (curl, the queue worker's own calls) are unaffected; same-origin operator UI
+# calls (Origin http://127.0.0.1:7860 / localhost) are allowed.
+_ALLOWED_ORIGINS = {
+    "http://127.0.0.1:7860", "http://localhost:7860",
+}
+
+@fastapi_app.middleware("http")
+async def _origin_guard(request, call_next):
+    origin = request.headers.get("origin")
+    if origin and origin not in _ALLOWED_ORIGINS:
+        from fastapi.responses import JSONResponse
+        return JSONResponse({"detail": "forbidden origin"}, status_code=403)
+    return await call_next(request)
 
 # Setup static files for the studio
 import os
@@ -1829,6 +1846,11 @@ def _run_tryon_api_job(payload: TryOnApiRequest) -> dict[str, object]:
     else:
         raise HTTPException(status_code=400, detail="garment_image_path or garment_package_name is required.")
     output_path = Path(payload.output_image_path).expanduser().resolve()
+    # SECURITY (try-on#42): constrain the output path to the project root so an
+    # unauthenticated local caller cannot write a PNG to an arbitrary location.
+    _project_root = Path(__file__).resolve().parent
+    if not str(output_path).startswith(str(_project_root) + "/"):
+        raise HTTPException(status_code=400, detail="output_image_path must be within the try-on workspace.")
 
     if not person_path.exists():
         raise HTTPException(status_code=400, detail=f"Person image not found: {person_path}")
