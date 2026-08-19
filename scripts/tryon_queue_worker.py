@@ -2344,12 +2344,14 @@ class TryOnQueueWorker:
         if not self.config.segmind_api_key:
             raise RuntimeError("segmind_api_key_missing")
 
-        human_image_upload = self.upload_to_imgbb(person_input_path)
-        garment_image_upload = self.upload_to_imgbb(garment_input_path)
-
+        # Inputs go inline as raw base64 - Segmind accepts base64 or URLs, and
+        # the ImgBB round-trip this replaced (2026-08-19) stalled every render
+        # during an ImgBB degradation. Raw file bytes, no recompression, so
+        # the provider sees EXACTLY the pixels it used to fetch from ImgBB and
+        # render behavior cannot drift (verified live with a 200 render).
         request_payload = self._coerce_segmind_payload(payload)
-        request_payload["human_img"] = human_image_upload["imageUrl"]
-        request_payload["garm_img"] = garment_image_upload["imageUrl"]
+        request_payload["human_img"] = base64.b64encode(person_input_path.read_bytes()).decode()
+        request_payload["garm_img"] = base64.b64encode(garment_input_path.read_bytes()).decode()
         if _has_alpha_channel(garment_input_path):
             _apply_segmind_transparent_png_rules(request_payload, payload)
 
