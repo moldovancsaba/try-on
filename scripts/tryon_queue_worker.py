@@ -1736,6 +1736,25 @@ class TryOnQueueWorker:
         normalized_description = description.strip().rstrip(". ")
         lower_description = normalized_description.lower()
         constraints = [
+            # try-on#37 follow-up (2026-08-19): IDM-VTON has no mask control,
+            # so sleeve style can only be steered through the prompt. Without
+            # these lines it hallucinates long sleeves from the jersey's side
+            # panel texture - observed live: a sleeveless 3x3 Debrecen jersey
+            # rendered with painted 3/4 sleeves over a person whose arms were
+            # already bare. The local pipeline's expose_arms mask remains the
+            # authoritative fix; this is the best available lever on Segmind.
+        ]
+        if payload.get("mask_mode") == "expose_arms":
+            constraints.append(
+                "the garment is a sleeveless jersey: the person's arms stay completely bare "
+                "from the shoulders down, with natural skin, and no sleeves of any kind are painted"
+            )
+        elif _safe_str(payload.get("sleeve_length")) == "short_sleeve":
+            constraints.append(
+                "the garment has short sleeves ending above the elbow: the forearms stay bare "
+                "with natural skin, and no long sleeves are painted"
+            )
+        constraints += [
             "the person is male",
             "keep the person masculine",
             "do not add female anatomy or breasts",

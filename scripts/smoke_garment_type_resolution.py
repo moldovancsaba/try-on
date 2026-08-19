@@ -148,6 +148,24 @@ def main() -> int:
     if req["category"] != "dresses":
         failures.append(f"alpha rules should force dresses when category_source is absent, got {req['category']}")
 
+
+    # --- segmind sleeve steering (live regression 2026-08-19): sleeveless and
+    # short-sleeve jerseys must carry their sleeve constraint in garment_des;
+    # motorsport suits must not ---
+    import types
+    from tryon_queue_worker import TryOnQueueWorker
+
+    coerce = types.MethodType(TryOnQueueWorker._coerce_segmind_payload, object())
+    des = coerce({"mask_mode": "expose_arms", "category_source": "garment_type"})["garment_des"].lower()
+    if "sleeveless jersey" not in des or "completely bare" not in des:
+        failures.append("segmind garment_des missing sleeveless constraint under expose_arms")
+    des = coerce({"sleeve_length": "short_sleeve", "mask_mode": "default"})["garment_des"].lower()
+    if "short sleeves" not in des:
+        failures.append("segmind garment_des missing short-sleeve constraint")
+    des = coerce({"mask_mode": "default", "sleeve_length": "default"})["garment_des"].lower()
+    if "sleeveless jersey" in des or "short sleeves ending" in des:
+        failures.append("segmind garment_des must not carry sleeve constraints for default renders")
+
     for line in failures:
         print(f"FAIL {line}")
     if failures:
