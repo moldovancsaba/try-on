@@ -41,9 +41,10 @@ Cross-origin requests are refused (403) by design; loopback/no-Origin callers pa
 - Stuck/orphaned workspaces: `queue/processing/<job>` left by a hard kill is
   reconciled from Atlas, not the filesystem. Run
   `python3 scripts/tryon_infra_cli.py reconcile` before deleting any orphan.
-- `queue/done` + `queue/failed` grow unbounded today; a retention policy is
-  tracked in try-on#45. Until it lands, prune manually with care (never delete a
-  leased/in-flight job).
+- `queue/done` + `queue/failed` retention (try-on#45): `python3
+  scripts/tryon_infra_cli.py prune-queue [--days 30] [--keep 200] [--apply]`.
+  Dry-run by default; prunes terminal buckets only (never queue/processing, so
+  no leased/in-flight job is touched). Run periodically or wire to a cron.
 
 ## Provider routing (operational)
 Garment-typed jersey/top/bottom jobs on a Segmind setup render on FASHN v1.6
