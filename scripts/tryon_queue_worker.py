@@ -418,6 +418,34 @@ def _has_alpha_channel(image_path: Path) -> bool:
         return _image_has_alpha_channel(image)
 
 
+def _apply_segmind_transparent_png_rules(request_payload: dict[str, Any], payload: dict[str, Any]) -> None:
+    """Adjust a Segmind request for a transparent-PNG garment, in place.
+
+    IDM-VTON paints into transparent regions and leaves halos unless told not
+    to, so alpha garments get an explicit alpha-edge prompt and neutral
+    crop/force_dc/mask_only flags.
+
+    try-on#37 follow-up (2026-08-19): this hack ALSO used to force category to
+    "dresses" (full-body) for every alpha garment, which stomped garment-typed
+    jerseys back to full-body - sleeveless/short-sleeve jerseys rendered with
+    painted pants and sleeves (observed live on 3x3 Debrecen renders). A
+    category resolved from the garment's own type now wins; the MotoGP-era
+    forcing only remains for setup-derived categories.
+    """
+    if payload.get("category_source") != "garment_type":
+        request_payload["category"] = "dresses"
+    request_payload["crop"] = False
+    request_payload["force_dc"] = False
+    request_payload["mask_only"] = False
+    extra_prompt = (
+        "For transparent garment PNG inputs, preserve the exact alpha edge boundary as a hard mask, "
+        "never paint into transparent regions, and avoid halos or background bleeding."
+    )
+    lowered_prompt = request_payload["garment_des"].lower()
+    if "alpha" not in lowered_prompt and "transparent garment png" not in lowered_prompt:
+        request_payload["garment_des"] = f"{request_payload['garment_des']}. {extra_prompt}"
+
+
 def _normalize_segmind_aspect(image_path: Path) -> None:
     with Image.open(image_path) as image:
         image = ImageOps.exif_transpose(image)
@@ -2261,17 +2289,7 @@ class TryOnQueueWorker:
         request_payload["human_img"] = human_image_upload["imageUrl"]
         request_payload["garm_img"] = garment_image_upload["imageUrl"]
         if _has_alpha_channel(garment_input_path):
-            request_payload["category"] = "dresses"
-            request_payload["crop"] = False
-            request_payload["force_dc"] = False
-            request_payload["mask_only"] = False
-            extra_prompt = (
-                "For transparent garment PNG inputs, preserve the exact alpha edge boundary as a hard mask, "
-                "never paint into transparent regions, and avoid halos or background bleeding."
-            )
-            lowered_prompt = request_payload["garment_des"].lower()
-            if "alpha" not in lowered_prompt and "transparent garment png" not in lowered_prompt:
-                request_payload["garment_des"] = f"{request_payload['garment_des']}. {extra_prompt}"
+            _apply_segmind_transparent_png_rules(request_payload, payload)
 
         response = self._call_provider(
             "segmind",

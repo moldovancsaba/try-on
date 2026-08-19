@@ -125,6 +125,29 @@ def main() -> int:
     if set(GARMENT_TYPE_TO_CATEGORY) != {"motorsport_suit", "jersey", "top", "bottom"}:
         failures.append(f"GARMENT_TYPE_TO_CATEGORY keys drifted: {sorted(GARMENT_TYPE_TO_CATEGORY)}")
 
+
+    # --- segmind transparent-PNG rules (live regression 2026-08-19): the
+    # alpha-halo hack must NOT stomp a garment-typed category back to
+    # full-body "dresses"; setup-derived categories keep the old forcing ---
+    from tryon_queue_worker import _apply_segmind_transparent_png_rules
+
+    req = {"category": "upper_body", "garment_des": "Sport jersey"}
+    _apply_segmind_transparent_png_rules(req, {"category_source": "garment_type"})
+    if req["category"] != "upper_body":
+        failures.append(f"alpha rules stomped garment-typed category: {req['category']}")
+    if "alpha edge" not in req["garment_des"]:
+        failures.append("alpha rules must still add the alpha-edge prompt for garment-typed renders")
+
+    req = {"category": "upper_body", "garment_des": "Sport jersey"}
+    _apply_segmind_transparent_png_rules(req, {"category_source": "setup"})
+    if req["category"] != "dresses":
+        failures.append(f"alpha rules should still force dresses for setup-derived category, got {req['category']}")
+
+    req = {"category": "upper_body", "garment_des": "Sport jersey"}
+    _apply_segmind_transparent_png_rules(req, {})
+    if req["category"] != "dresses":
+        failures.append(f"alpha rules should force dresses when category_source is absent, got {req['category']}")
+
     for line in failures:
         print(f"FAIL {line}")
     if failures:
