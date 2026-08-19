@@ -643,7 +643,7 @@ def _load_models():
         _refresh_capability_report()
         print(f"[try-on] Load failed: {exc}")
 
-def _inference(person_img, cloth_img, category, sleeve_length, pant_length, resolution, num_steps, guidance, seed, show_mask, mask_sharpness, mask_padding, detail_boost, face_restore_strength, preserve_head, lock_seed, use_vae_hf, sampler_name, bg_plate, composite_strength, enable_deep_texture, warp_strength, progress=gr.Progress()):
+def _inference(person_img, cloth_img, category, sleeve_length, pant_length, resolution, num_steps, guidance, seed, show_mask, mask_sharpness, mask_padding, detail_boost, face_restore_strength, preserve_head, lock_seed, use_vae_hf, sampler_name, bg_plate, composite_strength, enable_deep_texture, warp_strength, progress=gr.Progress(), *, mask_mode="default"):
     if not _TRYON_TASK_LOCK.acquire(blocking=False):
         yield None, None, "Try-On is already processing one job. Please wait for the current task to finish.", gr.update(), gr.update(interactive=True, value="Generate Try-On")
         return
@@ -655,13 +655,13 @@ def _inference(person_img, cloth_img, category, sleeve_length, pant_length, reso
         return
 
     try:
-        yield from _run_inference_locked(person_img, cloth_img, category, sleeve_length, pant_length, resolution, num_steps, guidance, seed, show_mask, mask_sharpness, mask_padding, detail_boost, face_restore_strength, preserve_head, lock_seed, use_vae_hf, sampler_name, bg_plate, composite_strength, enable_deep_texture, warp_strength, progress)
+        yield from _run_inference_locked(person_img, cloth_img, category, sleeve_length, pant_length, resolution, num_steps, guidance, seed, show_mask, mask_sharpness, mask_padding, detail_boost, face_restore_strength, preserve_head, lock_seed, use_vae_hf, sampler_name, bg_plate, composite_strength, enable_deep_texture, warp_strength, progress, mask_mode=mask_mode)
     finally:
         system_task_lock.release()
         _TRYON_TASK_LOCK.release()
 
 
-def _run_inference_locked(person_img, cloth_img, category, sleeve_length, pant_length, resolution, num_steps, guidance, seed, show_mask, mask_sharpness, mask_padding, detail_boost, face_restore_strength, preserve_head, lock_seed, use_vae_hf, sampler_name, bg_plate, composite_strength, enable_deep_texture, warp_strength, progress=gr.Progress()):
+def _run_inference_locked(person_img, cloth_img, category, sleeve_length, pant_length, resolution, num_steps, guidance, seed, show_mask, mask_sharpness, mask_padding, detail_boost, face_restore_strength, preserve_head, lock_seed, use_vae_hf, sampler_name, bg_plate, composite_strength, enable_deep_texture, warp_strength, progress=gr.Progress(), *, mask_mode="default"):
     """Run one try-on render, yielding progress tuples until the final image.
 
     A generator, not a function: it yields
@@ -794,7 +794,14 @@ def _run_inference_locked(person_img, cloth_img, category, sleeve_length, pant_l
     
     # AutoMasker Mapping
     automask_category = _CATEGORY_TO_AUTOMASK.get(category, "upper")
-    mask_result = _MASKER(person, automask_category, sleeve_length=sleeve_length, pant_length=pant_length)
+    # try-on#38: expose_arms keeps the arm regions inside the edit mask so a
+    # sleeveless garment renders with synthesized bare skin. The shrink
+    # semantics of sleeve_length and the exposure mode are mutually exclusive
+    # by construction inside cloth_agnostic_mask; forcing 'default' here makes
+    # that visible at the call site too.
+    if mask_mode == "expose_arms":
+        sleeve_length = "default"
+    mask_result = _MASKER(person, automask_category, sleeve_length=sleeve_length, pant_length=pant_length, expose_arms=(mask_mode == "expose_arms"))
     mask_pil = mask_result["mask"]
     hand_mask_pil = _build_hand_preserve_mask(mask_result) if preserve_hands else None
 
@@ -1558,6 +1565,18 @@ class TryOnApiRequest(BaseModel):
     output_image_path: str
     processing_profile: str = PROCESSING_PROFILE_GENERIC
     category: str = _CATEGORY_UPPER
+    # WHAT: where the caller's category came from (try-on#37). 'garment_type'
+    #     means the queue worker resolved it from the garment's own catalog
+    #     type - a processing profile must then not override category or
+    #     sleeve/pant length (it keeps its quality knobs). 'setup' preserves
+    #     the historical behavior where the MotoGP profile forces Full-Body.
+    category_source: str = "setup"
+    # WHAT: masking mode (try-on#38). 'expose_arms' keeps the arm regions
+    #     inside the edit mask so a sleeveless garment renders with
+    #     synthesized bare skin instead of the source photo's sleeves. Only
+    #     valid for Upper-category renders; validated, not coerced - a wrong
+    #     mask mode produces an expensively wrong render, so fail fast.
+    mask_mode: str = "default"
     sleeve_length: str = "default"
     pant_length: str = "default"
     resolution: str = "High Quality"
@@ -1620,9 +1639,14 @@ def _apply_processing_profile(payload: TryOnApiRequest) -> TryOnApiRequest:
     profile = normalize_processing_profile(payload.processing_profile)
     payload.processing_profile = profile
     if profile == PROCESSING_PROFILE_MOTOGP:
-        payload.category = _CATEGORY_FULL_BODY
-        payload.sleeve_length = "default"
-        payload.pant_length = "default"
+        # try-on#37: when the worker resolved category from the garment's own
+        # type, the profile keeps its quality knobs but must not stomp the
+        # garment identity - a jersey routed through the MotoGP-tuned profile
+        # would otherwise be forced back to a full-body mask.
+        if payload.category_source != "garment_type":
+            payload.category = _CATEGORY_FULL_BODY
+            payload.sleeve_length = "default"
+            payload.pant_length = "default"
         payload.resolution = "High Quality"
         has_alpha_garment = _garment_image_has_alpha(payload.garment_image_path)
         # High-fidelity Leather route tuned for logo and print clarity.
@@ -1782,6 +1806,15 @@ def _run_tryon_api_job(payload: TryOnApiRequest) -> dict[str, object]:
 
     payload = _apply_processing_profile(payload)
 
+    # try-on#38: mask_mode is validated, never coerced - a wrong mask mode
+    # produces an expensively wrong render, so fail fast with a named error.
+    # expose_arms is only defined for upper-body garments; the category here
+    # is post-profile and post-normalization, i.e. what will actually render.
+    if payload.mask_mode not in ("default", "expose_arms"):
+        raise HTTPException(status_code=400, detail=f"Unknown mask_mode: {payload.mask_mode!r} (allowed: default, expose_arms)")
+    if payload.mask_mode == "expose_arms" and _normalize_category(payload.category) != _CATEGORY_UPPER:
+        raise HTTPException(status_code=400, detail="mask_mode=expose_arms is only valid for Upper-category garments.")
+
     if not _READY.is_set():
         raise HTTPException(status_code=503, detail="Models are still loading.")
     if _ERROR:
@@ -1831,6 +1864,7 @@ def _run_tryon_api_job(payload: TryOnApiRequest) -> dict[str, object]:
         payload.composite_strength,
         payload.enable_deep_texture,
         payload.warp_strength,
+        mask_mode=payload.mask_mode,
     ):
         pass
 

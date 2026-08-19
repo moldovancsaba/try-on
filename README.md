@@ -156,8 +156,23 @@ across all three providers (`motorsport_suit → Full-Body/dresses/one-pieces`,
 `request.sleeveStyle` maps onto the local pipeline's `sleeve_length`. Jobs
 without the field (everything created before camera#115) resolve from the
 setup exactly as before. Every dispatch logs one line —
-`[tryon-worker] job=<id> category=... sleeve=... source=garment_type|setup` —
+`[tryon-worker] job=<id> category=... sleeve=... mask=... source=garment_type|setup` —
 so a wrong render is diagnosable from the worker log alone.
+
+Bare arms for sleeveless garments (try-on#38, local provider only): a
+`jersey`/`top` with `sleeveStyle='sleeveless'` renders with the local
+pipeline's `mask_mode='expose_arms'` — the arm regions stay INSIDE the edit
+mask so the model synthesizes bare skin over any sleeves in the source
+photo. This is deliberately the inversion of `sleeve_length='sleeveless'`,
+whose historical shrink semantics (preserve already-bare arms) remain
+untouched for every legacy setup and non-garment-typed job; the two are
+mutually exclusive by construction. Hands and face keep their hard
+protection in every mode. Catalog garments truthfully: a garment image that
+shows sleeves but is catalogued sleeveless gives the model contradictory
+conditioning. Verify quality per photo with
+`scripts/ab_render_expose_arms.py --person <img> --garment <img>` (renders
+default vs. expose_arms side by side with timings) before enabling a new
+jersey for an event.
 
 Required environment variables. Provider names are genericized here — `EXTERNAL_PROVIDER_*`
 and `OPTIONAL_PROVIDER_*` are placeholders, not variables the worker reads. Copy

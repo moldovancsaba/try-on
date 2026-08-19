@@ -75,20 +75,35 @@ def main() -> int:
         if _fal_category(resolved["category"]) != fal:
             failures.append(f"{gtype}: fal normalization mismatch, got {_fal_category(resolved['category'])!r}")
 
-    # --- sleeveStyle mapping, including long_sleeve -> default ---
+    # --- sleeveStyle mapping, including long_sleeve -> default. Sleeveless on
+    # a jersey/top is the expose_arms case (try-on#38): sleeve_length is
+    # forced to 'default' (the shrink and the exposure are mutually
+    # exclusive) and mask_mode carries the intent instead. ---
     for style, expected in SLEEVE_STYLE_TO_SLEEVE_LENGTH.items():
         resolved = resolve_render_params({"garmentType": "jersey", "sleeveStyle": style}, setup)
-        if resolved["sleeve_length"] != expected:
-            failures.append(f"sleeveStyle {style}: expected {expected!r}, got {resolved['sleeve_length']!r}")
+        expected_mask = "expose_arms" if style == "sleeveless" else "default"
+        expected_sleeve = "default" if style == "sleeveless" else expected
+        if resolved["sleeve_length"] != expected_sleeve:
+            failures.append(f"sleeveStyle {style}: expected sleeve {expected_sleeve!r}, got {resolved['sleeve_length']!r}")
+        if resolved["mask_mode"] != expected_mask:
+            failures.append(f"sleeveStyle {style}: expected mask_mode {expected_mask!r}, got {resolved['mask_mode']!r}")
+
+    # expose_arms triggers for top too, never for bottom/motorsport_suit
+    if resolve_render_params({"garmentType": "top", "sleeveStyle": "sleeveless"}, setup)["mask_mode"] != "expose_arms":
+        failures.append("top + sleeveless should trigger expose_arms")
+    for gtype in ("bottom", "motorsport_suit"):
+        resolved = resolve_render_params({"garmentType": gtype, "sleeveStyle": "sleeveless"}, setup)
+        if resolved["mask_mode"] != "default":
+            failures.append(f"{gtype} + sleeveless must never trigger expose_arms, got {resolved['mask_mode']!r}")
 
     # sleeveStyle absent with garmentType present -> setup's sleeve_length
     resolved = resolve_render_params({"garmentType": "jersey"}, {"category": "dresses", "sleeve_length": "short_sleeve"})
     if resolved["sleeve_length"] != "short_sleeve":
         failures.append(f"absent sleeveStyle should inherit setup sleeve_length, got {resolved['sleeve_length']!r}")
 
-    # --- legacy job (no fields): setup verbatim, source=setup ---
+    # --- legacy job (no fields): setup verbatim, source=setup, no mask mode ---
     resolved = resolve_render_params({}, {"category": "dresses", "sleeve_length": "sleeveless"})
-    if resolved != {"category": "dresses", "sleeve_length": "sleeveless", "source": "setup"}:
+    if resolved != {"category": "dresses", "sleeve_length": "sleeveless", "mask_mode": "default", "source": "setup"}:
         failures.append(f"legacy job should resolve to setup verbatim, got {resolved}")
 
     # sleeveStyle without garmentType is treated as legacy (precedence keys on garmentType alone)

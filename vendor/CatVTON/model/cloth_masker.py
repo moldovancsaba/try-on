@@ -201,6 +201,7 @@ class AutoMasker:
         part: str='overall',
         sleeve_length: str='default',
         pant_length: str='default',
+        expose_arms: bool=False,
         **kwargs
     ):
         assert part in ['upper', 'lower', 'overall', 'inner', 'outer'], f"part should be one of ['upper', 'lower', 'overall', 'inner', 'outer'], but got {part}"
@@ -243,7 +244,19 @@ class AutoMasker:
         background_area = part_mask_of(['Background'], schp_lip_mask, LIP_MAPPING) & part_mask_of(['Background'], schp_atr_mask, ATR_MAPPING)
         
         active_dense_parts = list(MASK_DENSE_PARTS[part])
-        if sleeve_length == 'sleeveless':
+        # Local modification (try-on#38, not upstream CatVTON): expose_arms is
+        # for a SLEEVELESS GARMENT on a possibly-sleeved source photo - the
+        # arms are part of what the garment reveals, so they must stay INSIDE
+        # the edit mask for the model to synthesize bare skin there. This is
+        # the inversion of the sleeve_length shrink below (which exists to
+        # PRESERVE already-bare arms), and the two are mutually exclusive by
+        # construction: the expose branch never runs the shrink. Hands/face
+        # strong-protect subtraction below is untouched either way.
+        if expose_arms:
+            for _arm_part in ('big arms', 'forearms'):
+                if _arm_part not in active_dense_parts:
+                    active_dense_parts.append(_arm_part)
+        elif sleeve_length == 'sleeveless':
             if 'big arms' in active_dense_parts: active_dense_parts.remove('big arms')
             if 'forearms' in active_dense_parts: active_dense_parts.remove('forearms')
         elif sleeve_length == 'short_sleeve':
@@ -279,16 +292,18 @@ class AutoMasker:
         mask_type: str = "upper",
         sleeve_length: str = "default",
         pant_length: str = "default",
+        expose_arms: bool = False,
     ):
         assert mask_type in ['upper', 'lower', 'overall', 'inner', 'outer'], f"mask_type should be one of ['upper', 'lower', 'overall', 'inner', 'outer'], but got {mask_type}"
         preprocess_results = self.preprocess_image(image)
         mask = self.cloth_agnostic_mask(
-            preprocess_results['densepose'], 
-            preprocess_results['schp_lip'], 
-            preprocess_results['schp_atr'], 
+            preprocess_results['densepose'],
+            preprocess_results['schp_lip'],
+            preprocess_results['schp_atr'],
             part=mask_type,
             sleeve_length=sleeve_length,
             pant_length=pant_length,
+            expose_arms=expose_arms,
         )
         return {
             'mask': mask,

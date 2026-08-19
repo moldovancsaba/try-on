@@ -117,10 +117,20 @@ def resolve_render_params(request: dict[str, Any], setup_payload: dict[str, Any]
     garment_type = str(request.get("garmentType") or "").strip()
     if garment_type in GARMENT_TYPE_TO_CATEGORY:
         sleeve_style = str(request.get("sleeveStyle") or "").strip()
+        # try-on#38: a sleeveless jersey/top must render with synthesized bare
+        # arms - that is the expose_arms mask mode, and it is mutually
+        # exclusive with sleeve_length's shrink semantics (which exist to
+        # PRESERVE already-bare arms), so sleeve_length is forced to default.
+        expose_arms = garment_type in ("jersey", "top") and sleeve_style == "sleeveless"
         return {
             "category": GARMENT_TYPE_TO_CATEGORY[garment_type],
-            "sleeve_length": SLEEVE_STYLE_TO_SLEEVE_LENGTH.get(sleeve_style)
-            or str(setup_payload.get("sleeve_length") or "default"),
+            "sleeve_length": "default"
+            if expose_arms
+            else (
+                SLEEVE_STYLE_TO_SLEEVE_LENGTH.get(sleeve_style)
+                or str(setup_payload.get("sleeve_length") or "default")
+            ),
+            "mask_mode": "expose_arms" if expose_arms else "default",
             "source": "garment_type",
         }
     if garment_type:
@@ -128,6 +138,7 @@ def resolve_render_params(request: dict[str, Any], setup_payload: dict[str, Any]
     return {
         "category": str(setup_payload.get("category") or "") or None,
         "sleeve_length": str(setup_payload.get("sleeve_length") or "") or None,
+        "mask_mode": "default",
         "source": "setup",
     }
 
@@ -2393,9 +2404,14 @@ class TryOnQueueWorker:
                 payload["category"] = render_params["category"]
             if render_params["sleeve_length"]:
                 payload["sleeve_length"] = render_params["sleeve_length"]
+            payload["mask_mode"] = render_params["mask_mode"]
+            # Tells app.py's processing-profile application not to stomp a
+            # garment-derived category back to Full-Body (try-on#37/#38).
+            payload["category_source"] = render_params["source"]
             print(
                 f"[tryon-worker] job={job['jobId']} category={payload.get('category')!r} "
-                f"sleeve={payload.get('sleeve_length')!r} source={render_params['source']}",
+                f"sleeve={payload.get('sleeve_length')!r} mask={render_params['mask_mode']} "
+                f"source={render_params['source']}",
                 flush=True,
             )
             resolved_setup_id = setup_payload["setupId"]

@@ -56,9 +56,14 @@ Optional request fields:
   An unrecognized value is logged and treated as absent — never a validation failure,
   so a newer Camera can ship a new type before this worker learns it.
 - `request.sleeveStyle` — `sleeveless | short_sleeve | long_sleeve`; snapshot of the
-  garment's sleeve style. Only consulted when `garmentType` is present and recognized;
-  maps onto the local pipeline's `sleeve_length` parameter
-  (`sleeveless→sleeveless`, `short_sleeve→short_sleeve`, `long_sleeve→default`).
+  garment's sleeve style. Only consulted when `garmentType` is present and recognized.
+  `short_sleeve` maps onto the local pipeline's `sleeve_length='short_sleeve'`,
+  `long_sleeve` onto `'default'`. `sleeveless` on a `jersey`/`top` does NOT map onto
+  `sleeve_length='sleeveless'` (whose historical semantics preserve already-bare
+  arms by shrinking the edit mask) — it selects the local pipeline's
+  `mask_mode='expose_arms'` instead (try-on#38), which keeps the arm regions inside
+  the edit mask so the model synthesizes bare skin over any source-photo sleeves,
+  with `sleeve_length` forced to `'default'` (the two are mutually exclusive).
 - `request.outfitBottomLeatherSuitId` — reserved by try-on#39 (two-pass outfit
   rendering); presence marks the job as a two-piece outfit whose `leatherSuitId` is
   the `top` piece. See that issue's section below once implemented.
