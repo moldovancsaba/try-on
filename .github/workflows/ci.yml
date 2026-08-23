@@ -1,0 +1,42 @@
+name: CI
+
+# WHAT: minimum gate for the try-on Python service.
+# WHY: try-on had no CI at all. A full `pip install -r requirements.txt` is
+#      deliberately NOT run here -- it pulls torch, diffusers, mediapipe and
+#      ultralytics, gigabytes of wheels for a check that would still not
+#      exercise the GPU paths. A syntax gate plus a secret scan catches the
+#      two failure modes that actually reach main: a file that cannot import,
+#      and a credential pasted into a script.
+#      --no-git scopes the scan to the working tree: it protects what is being
+#      committed now. History is deliberately out of scope -- a first run over
+#      years of commits would surface archaeology, not actionable findings.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  verify:
+    name: Verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Byte-compile every source file
+        run: python -m compileall -q app.py model_paths.py services scripts studio_tools tests
+
+      - name: Secret scan
+        run: |
+          VERSION=8.18.4
+          curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}/gitleaks_${VERSION}_linux_x64.tar.gz" \
+            | tar -xz -C /tmp gitleaks
+          /tmp/gitleaks detect --source . --no-git --redact --no-banner --exit-code 1
