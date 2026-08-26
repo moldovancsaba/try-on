@@ -64,6 +64,40 @@ class WorkerPublicationTests(unittest.TestCase):
         self.assertEqual(update["result"]["imgbbDeleteUrl"], "https://cdn.example/delete")
         self.assertEqual(update["processing.publicationState"], "uploaded")
 
+    def test_ensure_published_result_uploads_to_blob_and_mirrors_to_imgbb(self) -> None:
+        worker = self.make_worker({"jobId": "job_5", "result": {}, "processing": {}})
+        worker.upload_to_blob = Mock(return_value={"imageUrl": "https://cdn.blob/result.png", "deleteUrl": None})
+        worker.upload_to_imgbb = Mock(return_value={"imageUrl": "https://i.ibb.co/result.png", "deleteUrl": "https://i.ibb.co/delete"})
+
+        with tempfile.TemporaryDirectory() as tmp:
+            upload = worker.ensure_published_result("job_5", Path(tmp) / "result.png", job_snapshot=worker.jobs.job)
+
+        worker.upload_to_blob.assert_called_once()
+        worker.upload_to_imgbb.assert_called_once()
+        self.assertEqual(upload["imageUrl"], "https://cdn.blob/result.png")
+        self.assertEqual(upload["provider"], "blob")
+        self.assertEqual(upload["mirrorImageUrl"], "https://i.ibb.co/result.png")
+        update = worker.jobs.updates[-1]["$set"]
+        self.assertEqual(update["result"]["publicResultUrl"], "https://cdn.blob/result.png")
+        self.assertEqual(update["result"]["provider"], "blob")
+        self.assertEqual(update["result"]["imgbbMirrorUrl"], "https://i.ibb.co/result.png")
+
+    def test_ensure_published_result_tolerates_imgbb_mirror_failure(self) -> None:
+        """The mirror is best-effort: Blob succeeding is enough to publish, even if
+        the imgbb mirror upload raises."""
+        worker = self.make_worker({"jobId": "job_6", "result": {}, "processing": {}})
+        worker.upload_to_blob = Mock(return_value={"imageUrl": "https://cdn.blob/result.png", "deleteUrl": None})
+        worker.upload_to_imgbb = Mock(side_effect=RuntimeError("imgbb_upload_failed:500:server error"))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            upload = worker.ensure_published_result("job_6", Path(tmp) / "result.png", job_snapshot=worker.jobs.job)
+
+        self.assertEqual(upload["imageUrl"], "https://cdn.blob/result.png")
+        self.assertEqual(upload["provider"], "blob")
+        self.assertNotIn("mirrorImageUrl", upload)
+        update = worker.jobs.updates[-1]["$set"]
+        self.assertEqual(update["result"]["publicResultUrl"], "https://cdn.blob/result.png")
+
     def test_camera_completion_is_skipped_when_already_notified(self) -> None:
         worker = self.make_worker(
             {

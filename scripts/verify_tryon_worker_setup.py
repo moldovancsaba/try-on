@@ -63,6 +63,48 @@ def test_mongodb(uri: str, db_name: str) -> bool:
         client.close()
 
 
+def test_blob(token: str) -> bool:
+    """Real upload+delete probe against Vercel Blob's REST API (no official Python
+    SDK exists; same raw PUT the worker's upload_to_blob() uses)."""
+    store_id = token.split("_")[3] if len(token.split("_")) > 3 else ""
+    probe_bytes = bytes.fromhex(
+        "89504e470d0a1a0a0000000d494844520000000100000001080600000"
+        "01f15c4890000000d4944415478da62fc0f040c0c04008e05af04f3f9"
+        "c1230000000049454e44ae426082"
+    )
+    try:
+        put_response = requests.put(
+            "https://vercel.com/api/blob/",
+            params={"pathname": "verify-tryon-worker-setup-probe.png"},
+            data=probe_bytes,
+            headers={
+                "x-vercel-blob-store-id": store_id,
+                "x-api-version": "12",
+                "authorization": f"Bearer {token}",
+                "x-content-type": "image/png",
+                "x-add-random-suffix": "1",
+            },
+            timeout=30,
+        )
+        if not put_response.ok:
+            return print_result(False, "Vercel Blob", f"upload rejected: HTTP {put_response.status_code}")
+        image_url = put_response.json().get("url", "")
+        requests.post(
+            "https://vercel.com/api/blob/delete",
+            headers={
+                "x-vercel-blob-store-id": store_id,
+                "x-api-version": "12",
+                "authorization": f"Bearer {token}",
+                "content-type": "application/json",
+            },
+            json={"urls": [image_url]},
+            timeout=30,
+        )
+        return print_result(True, "Vercel Blob", "token accepted (test object uploaded and cleaned up)")
+    except Exception as error:  # pragma: no cover - operational check
+        return print_result(False, "Vercel Blob", str(error))
+
+
 def test_imgbb(api_key: str) -> bool:
     probe_png = (
         "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
@@ -142,6 +184,7 @@ def main() -> int:
 
     mongo_ok, mongo_uri = check_env("MONGODB_ATLAS_URI", ["MONGODB_URI"])
     mongo_db_ok, mongo_db = check_env("MONGODB_DB_NAME", ["MONGODB_DB"])
+    blob_ok, blob_token = check_env("BLOB_READ_WRITE_TOKEN")
     imgbb_ok, imgbb_key = check_env("IMGBB_API_KEY")
     complete_ok, complete_url = check_env("CAMERA_TRYON_COMPLETE_URL")
     secret_ok, _secret = check_env("CAMERA_TRYON_INTERNAL_SECRET")
@@ -151,7 +194,11 @@ def main() -> int:
 
     checks.append(print_result(mongo_ok, "MONGODB_ATLAS_URI / MONGODB_URI", "configured" if mongo_ok else "missing"))
     checks.append(print_result(mongo_db_ok, "MONGODB_DB_NAME / MONGODB_DB", mongo_db if mongo_db_ok else "missing"))
-    checks.append(print_result(imgbb_ok, "IMGBB_API_KEY", "configured" if imgbb_ok else "missing"))
+    checks.append(print_result(blob_ok, "BLOB_READ_WRITE_TOKEN", "configured" if blob_ok else "missing"))
+    if imgbb_ok:
+        print_result(True, "IMGBB_API_KEY", "configured (best-effort mirror, optional)")
+    else:
+        print("○ IMGBB_API_KEY: not set (optional -- best-effort mirror only, results still publish via Blob)")
     checks.append(print_result(complete_ok, "CAMERA_TRYON_COMPLETE_URL", complete_url if complete_ok else "missing"))
     checks.append(print_result(secret_ok, "CAMERA_TRYON_INTERNAL_SECRET", "configured" if secret_ok else "missing"))
     checks.append(print_result(local_api_ok, "TRYON_LOCAL_API_URL", local_api_url if local_api_ok else "missing"))
@@ -166,8 +213,10 @@ def main() -> int:
 
     if mongo_ok and mongo_db_ok:
         checks.append(test_mongodb(mongo_uri, mongo_db))
+    if blob_ok:
+        checks.append(test_blob(blob_token))
     if imgbb_ok:
-        checks.append(test_imgbb(imgbb_key))
+        test_imgbb(imgbb_key)
     if complete_ok:
         checks.append(test_url("Camera completion endpoint", complete_url))
     if local_api_ok:

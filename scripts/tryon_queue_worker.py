@@ -193,6 +193,7 @@ class WorkerConfig:
     suit_asset_root: Path | None
     local_tryon_api_url: str
     local_tryon_timeout_seconds: int
+    blob_read_write_token: str
     imgbb_api_key: str
     camera_complete_url: str
     camera_internal_secret: str
@@ -212,6 +213,7 @@ class WorkerConfig:
     local_daily_limit: int
     segmind_daily_limit: int
     fal_daily_limit: int
+    blob_daily_limit: int
     imgbb_daily_limit: int
     camera_callback_daily_limit: int
     setup_collection: str
@@ -249,9 +251,11 @@ def load_config() -> WorkerConfig:
     is not read.
 
     Raises RuntimeError for the five values with no safe default — Mongo URI and db
-    name, the Camera completion url and secret, and the ImgBB key — because a worker
-    missing any of them would claim jobs it cannot finish. Provider keys are optional:
-    absent ones simply make that provider unavailable.
+    name, the Camera completion url and secret, and the Blob read-write token —
+    because a worker missing any of them would claim jobs it cannot finish. Provider
+    keys are optional: absent ones simply make that provider unavailable. ImgBB moved
+    to this optional group when Blob became the required primary result store (2026-08);
+    a missing key just disables the best-effort mirror upload.
     """
     repo_root = Path(__file__).resolve().parent.parent
     load_env_file(repo_root / ".env.tryon-worker")
@@ -267,13 +271,14 @@ def load_config() -> WorkerConfig:
 
     camera_complete_url = (os.getenv("CAMERA_TRYON_COMPLETE_URL") or "").strip()
     camera_internal_secret = (os.getenv("CAMERA_TRYON_INTERNAL_SECRET") or "").strip()
+    blob_read_write_token = (os.getenv("BLOB_READ_WRITE_TOKEN") or "").strip()
     imgbb_api_key = (os.getenv("IMGBB_API_KEY") or "").strip()
     if not camera_complete_url:
         raise RuntimeError("CAMERA_TRYON_COMPLETE_URL is required")
     if not camera_internal_secret:
         raise RuntimeError("CAMERA_TRYON_INTERNAL_SECRET is required")
-    if not imgbb_api_key:
-        raise RuntimeError("IMGBB_API_KEY is required")
+    if not blob_read_write_token:
+        raise RuntimeError("BLOB_READ_WRITE_TOKEN is required")
 
     fal_base_url = (os.getenv("FAL_BASE_URL") or "https://fal.run").strip()
     fal_key = (os.getenv("FAL_KEY") or "").strip()
@@ -308,6 +313,7 @@ def load_config() -> WorkerConfig:
         ),
         local_tryon_api_url=(os.getenv("TRYON_LOCAL_API_URL") or "http://127.0.0.1:7860/api/tryon/run").strip(),
         local_tryon_timeout_seconds=parse_int(os.getenv("TRYON_LOCAL_API_TIMEOUT_SECONDS"), 900),
+        blob_read_write_token=blob_read_write_token,
         imgbb_api_key=imgbb_api_key,
         camera_complete_url=camera_complete_url,
         camera_internal_secret=camera_internal_secret,
@@ -327,6 +333,7 @@ def load_config() -> WorkerConfig:
         local_daily_limit=parse_int(os.getenv("TRYON_LOCAL_DAILY_LIMIT"), 10000),
         segmind_daily_limit=parse_int(os.getenv("SEGMIND_DAILY_LIMIT"), 500),
         fal_daily_limit=parse_int(os.getenv("FAL_DAILY_LIMIT"), 500),
+        blob_daily_limit=parse_int(os.getenv("BLOB_DAILY_LIMIT"), 2000),
         imgbb_daily_limit=parse_int(os.getenv("IMGBB_DAILY_LIMIT"), 2000),
         camera_callback_daily_limit=parse_int(os.getenv("CAMERA_CALLBACK_DAILY_LIMIT"), 5000),
         setup_collection=(os.getenv("TRYON_SETUP_COLLECTION") or TRYON_SETUP_COLLECTION).strip(),
@@ -575,6 +582,7 @@ def classify_failure(message: str) -> tuple[bool, str]:
             "fal_status_failed",
             "fal_output_missing",
             "fal_api_no_output",
+            "blob_upload_failed",
             "imgbb_upload_failed",
         )
     ):
@@ -663,6 +671,14 @@ class TryOnQueueWorker:
                 failure_threshold=self.config.provider_failure_threshold,
                 cooldown_seconds=self.config.provider_cooldown_seconds,
                 daily_request_limit=self.config.fal_daily_limit,
+                concurrency_limit=1,
+            ),
+            "blob": ProviderPolicy(
+                provider="blob",
+                timeout_seconds=120,
+                failure_threshold=self.config.provider_failure_threshold,
+                cooldown_seconds=self.config.provider_cooldown_seconds,
+                daily_request_limit=self.config.blob_daily_limit,
                 concurrency_limit=1,
             ),
             "imgbb": ProviderPolicy(
@@ -1451,7 +1467,8 @@ class TryOnQueueWorker:
                         "publicResultUrl": upload["imageUrl"],
                         "deleteUrl": upload.get("deleteUrl"),
                         "imgbbDeleteUrl": upload.get("deleteUrl"),
-                        "provider": "imgbb",
+                        "provider": upload.get("provider", "blob"),
+                        "imgbbMirrorUrl": upload.get("mirrorImageUrl"),
                         "uploadedAt": now,
                     },
                     "processing.publicationState": PUBLICATION_STATE_UPLOADED,
@@ -1480,11 +1497,11 @@ class TryOnQueueWorker:
         if self._has_published_url(result_state):
             self.emit_event(
                 level="info",
-                event="imgbb_reused",
+                event="result_reused",
                 status="uploading_result",
                 stage="uploaded_result",
                 job_id=job_id,
-                details={"publicResultUrl": redact_url(public_result_url), "provider": str(result_state.get("provider") or "imgbb")},
+                details={"publicResultUrl": redact_url(public_result_url), "provider": str(result_state.get("provider") or "blob")},
             )
             self._clear_publication_error(job_id)
             return {"imageUrl": public_result_url, "deleteUrl": result_state.get("deleteUrl") or result_state.get("imgbbDeleteUrl")}
@@ -1499,16 +1516,33 @@ class TryOnQueueWorker:
                 }
             },
         )
-        upload = self.upload_to_imgbb(result_path)
+        upload = self.upload_to_blob(result_path)
+        upload["provider"] = "blob"
+        if self.config.imgbb_api_key:
+            try:
+                mirror = self.upload_to_imgbb(result_path)
+                upload["mirrorImageUrl"] = mirror["imageUrl"]
+                upload["deleteUrl"] = mirror.get("deleteUrl")
+            except Exception as exc:  # noqa: BLE001
+                # Best-effort mirror only -- Blob is the required primary above, so a
+                # mirror failure must never fail result publication.
+                self.emit_event(
+                    level="warning",
+                    event="imgbb_mirror_failed",
+                    status="uploading_result",
+                    stage="uploaded_result",
+                    job_id=job_id,
+                    details={"error": str(exc)[:300]},
+                )
         now = now_iso()
         self._upsert_publication_result(job_id, upload, now)
         self.emit_event(
             level="info",
-            event="imgbb_uploaded",
+            event="result_uploaded",
             status="uploading_result",
             stage="uploaded_result",
             job_id=job_id,
-            details={"publicResultUrl": redact_url(upload["imageUrl"])},
+            details={"publicResultUrl": redact_url(upload["imageUrl"]), "provider": "blob"},
         )
         return upload
 
@@ -2427,6 +2461,54 @@ class TryOnQueueWorker:
         edge_asset = assets.get("google_edge_mediapipe") or {}
         return edge_asset.get("ready") is True
 
+    def upload_to_blob(self, image_path: Path) -> dict[str, Any]:
+        """Upload a result image to Vercel Blob (required primary result store).
+
+        No official Python SDK exists for Vercel Blob; this calls the same REST API
+        the `@vercel/blob` JS SDK uses underneath (extracted from its compiled source,
+        node_modules/@vercel/blob/dist/chunk-YYMLUMXS.js in the camera repo, 2026-08):
+        PUT https://vercel.com/api/blob/?pathname=<name>, store id parsed from the
+        token's 4th underscore-separated segment (not encoded in the bearer token
+        itself), x-api-version 12 as of this writing.
+        """
+        token = self.config.blob_read_write_token
+        store_id = token.split("_")[3] if len(token.split("_")) > 3 else ""
+        content_type = "image/png"
+        try:
+            with Image.open(image_path) as probe:
+                fmt = (probe.format or "PNG").lower()
+                content_type = f"image/{fmt}"
+        except Exception:  # noqa: BLE001
+            pass
+
+        body = image_path.read_bytes()
+        request_id = f"{store_id}:{int(time.time() * 1000)}:{os.urandom(4).hex()}"
+        response = self._call_provider(
+            "blob",
+            lambda: requests.put(
+                "https://vercel.com/api/blob/",
+                params={"pathname": f"tryon-result-{image_path.stem}-{os.urandom(4).hex()}.{content_type.split('/')[-1]}"},
+                data=body,
+                headers={
+                    "x-api-blob-request-id": request_id,
+                    "x-vercel-blob-store-id": store_id,
+                    "x-api-blob-request-attempt": "0",
+                    "x-api-version": "12",
+                    "authorization": f"Bearer {token}",
+                    "x-content-type": content_type,
+                    "x-add-random-suffix": "1",
+                },
+                timeout=120,
+            ),
+        )
+        if response.status_code >= 400:
+            raise RuntimeError(f"blob_upload_failed:{response.status_code}:{response.text[:300]}")
+        payload = response.json()
+        image_url = payload.get("url")
+        if not image_url:
+            raise RuntimeError("blob_upload_missing_url")
+        return {"imageUrl": image_url, "deleteUrl": None}
+
     def upload_to_imgbb(self, image_path: Path) -> dict[str, Any]:
         encoded = base64.b64encode(image_path.read_bytes()).decode("utf-8")
         response = self._call_provider(
@@ -2829,7 +2911,9 @@ class TryOnQueueWorker:
             outcome = "failed"
             try:
                 latest_job = self.jobs.find_one({"jobId": job_id}) or job
-                if "imgbb_upload" in message:
+                if "blob_upload" in message:
+                    self._mark_publication_error(job_id, "blob_upload", message)
+                elif "imgbb_upload" in message:
                     self._mark_publication_error(job_id, "imgbb_upload", message)
                 elif "camera_completion_failed" in message:
                     self._mark_publication_error(job_id, "camera_completion", message)
