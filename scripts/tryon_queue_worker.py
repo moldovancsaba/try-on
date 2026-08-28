@@ -782,7 +782,7 @@ class TryOnQueueWorker:
             "cameraId": self._normalize_setup_id(str(camera_id)) if camera_id not in (None, "") else None,
             "rank": int(setup.get("rank") or 0),
             "revision": self._normalize_setup_id(str(setup.get("revision") or "")),
-            "config": {},
+            "config": setup.get("config") if isinstance(setup.get("config"), dict) else {},
         }
 
     def _load_local_default_setup(self, camera_id: str | None, *, allow_camera: bool) -> dict[str, Any] | None:
