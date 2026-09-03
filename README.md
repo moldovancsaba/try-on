@@ -145,8 +145,8 @@ Event-level setup selection (recommended):
 1. Camera operators change setup once per camera in UI.
 2. Camera app writes the selected `setupId` to `camera_setup_preferences`.
 3. `scripts/tryon_queue_worker.py` resolves setup for each job in order: explicit `request.setupId`, then per-camera preference from `camera_setup_preferences`, then global default.
-4. Atlas stores only setup selection metadata (`setupId`, name, defaults, ranking); setup payloads live in local catalog file (`.config/tryon_setups.json`).
-5. If a setup is unknown locally, the job falls back to the local fallback profile.
+4. A setup's config can live in either place: the local catalog file (`.config/tryon_setups.json`) or a full `config` payload written directly to its Atlas `tryon_setups` document (e.g. via Camera's admin UI). The local seed is checked first; on a miss, Atlas's own `config` field is read and used as-is (`scripts/tryon_queue_worker.py`'s `_load_setup_by_id`) -- an Atlas-only setup works correctly, not just as selection metadata.
+5. If a setup exists in neither place, the job falls back to the local fallback profile.
 
 Garment-type render resolution (try-on#37): when a job carries
 `request.garmentType` (snapshotted from the garment catalog by Camera —
@@ -344,7 +344,7 @@ API:
 
 - `GET /api/tryon/setups?cameraId=<cameraId>` returns active setups filtered for the camera and global defaults.
   - Metadata and names come from Atlas (`tryon_setups`).
-  - Config values come from `.config/tryon_setups.json` on the try-on machine.
+  - Config values come from the local catalog (`.config/tryon_setups.json`) when the setup exists there; otherwise from the same Atlas document's own `config` field.
 - the setup selection endpoint accepts `{ "cameraId": "camera_123" }` and writes preference.
   - Selected setup is validated against local catalog and recorded both in preference and setup metadata collection.
 
@@ -709,7 +709,21 @@ Rollback approach:
 
 ### How to update MongoDB Atlas presets
 
-Atlas stores metadata (`tryon_setups`) while this repo keeps full tuning payload in `.config/tryon_setups.json`.
+A setup's `tryon_setups` document in Atlas can carry either just selection metadata (`setupId`,
+`name`, `isDefault`, `rank`, `revision`) or a full `config` payload of its own. Two fully-supported
+update paths exist:
+
+- **Via the local catalog** (steps 1-7 below): edit `.config/tryon_setups.json` on the try-on
+  machine; the worker checks this catalog first and, on a match, uses its `config` regardless of
+  what Atlas holds for the same `setupId`.
+- **Via Camera's admin UI, writing straight to Atlas**: creating or editing a setup there writes
+  its full `config` directly into the `tryon_setups` document. This is not a fallback or
+  metadata-only path -- the worker reads that `config` field intact whenever the setup has no
+  local-catalog entry (`scripts/tryon_queue_worker.py`'s `_load_setup_by_id`). Use this path when a
+  setup only needs to exist in Atlas; use the local catalog when it should also be checked in to
+  this repo's version history.
+
+The steps below cover the local-catalog path specifically:
 
 1. Edit `.config/tryon_setups.json` and update each changed preset’s `revision`.
 2. Reload and sanity-check catalog JSON before rollout:
