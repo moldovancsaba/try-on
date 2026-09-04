@@ -193,6 +193,7 @@ class WorkerConfig:
     suit_asset_root: Path | None
     local_tryon_api_url: str
     local_tryon_timeout_seconds: int
+    local_api_secret: str
     blob_read_write_token: str
     imgbb_api_key: str
     camera_complete_url: str
@@ -313,6 +314,7 @@ def load_config() -> WorkerConfig:
         ),
         local_tryon_api_url=(os.getenv("TRYON_LOCAL_API_URL") or "http://127.0.0.1:7860/api/tryon/run").strip(),
         local_tryon_timeout_seconds=parse_int(os.getenv("TRYON_LOCAL_API_TIMEOUT_SECONDS"), 900),
+        local_api_secret=(os.getenv("TRYON_LOCAL_SECRET") or "").strip(),
         blob_read_write_token=blob_read_write_token,
         imgbb_api_key=imgbb_api_key,
         camera_complete_url=camera_complete_url,
@@ -1682,6 +1684,7 @@ class TryOnQueueWorker:
                 self.config.local_tryon_api_url,
                 json=payload,
                 timeout=self.config.local_tryon_timeout_seconds,
+                headers={"x-tryon-local-secret": self.config.local_api_secret},
             ),
         )
         if response.status_code >= 400:

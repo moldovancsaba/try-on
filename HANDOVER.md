@@ -1,20 +1,39 @@
 # Handover — Try-On Studio
 
-_Last updated: 2026-08-20_ (fleet version 12.2.0)
+_Last updated: 2026-09-03_ (verified @ 8c25ddd)
 
 Snapshot of where the repo is for the next person picking it up.
 
-## Recent work (2026-08-19 → 08-20)
+## Recent work (2026-08-19 → 09-03)
 - Garment types v1: garmentType/sleeveStyle resolution, `expose_arms` mask mode,
   two-pass outfit rendering (top→bottom).
 - Provider routing: garment-typed jersey/top/bottom on a Segmind setup reroute to
   FASHN v1.6 (fal). Motorsport suits + local/google keep their pipeline.
-- Provider inputs are base64 now (fal data-URI, Segmind raw); ImgBB is results-only.
-- Transparent garments are white-composited before fal (FASHN flattens alpha to
-  black, which read as long sleeves on the Debrecen jersey).
+- Provider inputs are base64 now (fal data-URI, Segmind raw); no ImgBB round-trip on
+  the input path.
+- Transparent garments are white-composited before fal only (FASHN flattens alpha to
+  black, which read as long sleeves on the Debrecen jersey). Segmind handles
+  transparent garments through a separate mechanism (forced `dresses` category +
+  alpha-edge prompt), not white-compositing.
 - Security (try-on#42): origin-guard middleware (cross-origin→403) + render output
   path constrained to the project root.
 - Version unified to fleet 12.2.0. See `docs/RUNBOOK.md` for operations.
+- CI added (2026-08-23): byte-compiles every source file and runs a working-tree
+  secret scan on push/PR to main. Deliberately skips installing `requirements.txt`
+  (torch/diffusers/mediapipe/ultralytics are gigabytes and still wouldn't exercise
+  GPU paths). `.env.tryon-worker.example` now leads with the fleet's `MONGODB_URI`/
+  `MONGODB_DB` names (the worker has always accepted both spellings).
+- Result storage (2026-08-26): Vercel Blob is now the required primary result store
+  (`BLOB_READ_WRITE_TOKEN`); ImgBB is demoted to a best-effort mirror that never
+  fails publication (`IMGBB_API_KEY` optional). Companion to camera's same-night
+  migration. Also fixed the source-image download host allowlist, which was
+  live-broken.
+- Bug fix (2026-08-28): `_load_setup_by_id`'s Mongo fallback hardcoded `config` to
+  `{}`, so any setup absent from the local `.config/tryon_setups.json` seed (e.g. one
+  created straight from Camera's admin UI) silently rendered through the MotoGP local
+  pipeline regardless of its real `processing_profile`. Fixed to copy the real config
+  through; regression test added. README's "Atlas is metadata-only" passages
+  described this exact bug as intended architecture — corrected.
 
 ## Runtime status
 
@@ -22,7 +41,8 @@ Snapshot of where the repo is for the next person picking it up.
 - App serves `http://127.0.0.1:7860`; `GET /api/capabilities` reports all core vault
   assets ready.
 - Queue growth is unbounded (retention tracked in try-on#45); reconcile orphans via `scripts/tryon_infra_cli.py reconcile`.
-- Test suite green: 51 passed. `pytest` is now provisioned by `install.sh`.
+- Test suite green (regression coverage for the Mongo config-passthrough fix added
+  2026-08-28). `pytest` is provisioned by `install.sh`.
 - Canary still has not been run; `.runtime/canary_status.json` is empty.
 
 ## Recently landed

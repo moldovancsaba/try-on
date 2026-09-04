@@ -118,6 +118,8 @@ Open:
 
 ## Camera Queue Worker
 
+_Worker flow and provider routing verified @ 8c25ddd._
+
 This repository is also the official local worker runtime for Camera try-on jobs.
 
 Flow:
@@ -125,7 +127,7 @@ Flow:
 1. Camera saves the normal submission.
 2. Camera enqueues a `tryon_jobs` record in MongoDB Atlas.
 3. `scripts/tryon_queue_worker.py` polls Atlas, claims a queued job, downloads the source image and the Camera-hosted garment asset, and renders via the resolved provider. Garment-typed jersey/top/bottom jobs on a Segmind setup are rerouted to FASHN v1.6 (fal); motorsport suits and local/google setups keep their pipeline. Provider inputs travel as base64 (fal data-URI, Segmind raw) — no ImgBB round-trip on the input path. Only local/motogp profiles call `POST /api/tryon/run`.
-4. The worker uploads the generated RESULT to ImgBB (results only; inputs are base64).
+4. The worker uploads the generated RESULT to Vercel Blob (the required primary result store since 2026-08-26); ImgBB, if configured, is a best-effort mirror only — a mirror failure never fails publication (inputs are base64, unrelated to this result-upload step).
 5. The worker persists upload state, calls Camera’s internal completion endpoint, and only then marks the queue row `done`.
 6. Camera admins review and approve/reject the result before it becomes share-visible or slideshow-eligible.
 
@@ -184,15 +186,20 @@ conditioning. Verify quality per photo with
 default vs. expose_arms side by side with timings) before enabling a new
 jersey for an event.
 
-Required environment variables. Provider names are genericized here — `EXTERNAL_PROVIDER_*`
-and `OPTIONAL_PROVIDER_*` are placeholders, not variables the worker reads. Copy
-`.env.tryon-worker.example` for the literal names, and note that
-`TRYON_POLL_INTERVAL_SECONDS` is documentation only: the poll interval is held in the
-worker settings store and changed via the Worker Control page.
+Required environment variables, plus the optional provider keys the worker also reads.
+Provider names are genericized here — `EXTERNAL_PROVIDER_*` and `OPTIONAL_PROVIDER_*`
+are placeholders, not variables the worker reads. Copy `.env.tryon-worker.example` for
+the literal names, and note that `TRYON_POLL_INTERVAL_SECONDS` is documentation only:
+the poll interval is held in the worker settings store and changed via the Worker
+Control page. Five values have no safe default and raise at startup if missing: Mongo
+URI and db name, the Camera completion URL and secret, and `BLOB_READ_WRITE_TOKEN`
+(required since Vercel Blob became the primary result store). `IMGBB_API_KEY` is
+optional — absent, it just disables the best-effort result mirror.
 
 ```bash
 MONGODB_ATLAS_URI=...
 MONGODB_DB_NAME=...
+BLOB_READ_WRITE_TOKEN=...
 IMGBB_API_KEY=...
 CAMERA_TRYON_COMPLETE_URL=...
 CAMERA_TRYON_INTERNAL_SECRET=...

@@ -1,5 +1,48 @@
 # Release Notes
 
+## Garment types, provider routing, and result storage - 2026-08-19 → 2026-08-28
+
+**Garment types v1** (try-on#37, #38, #39): jobs can now carry a snapshot
+`request.garmentType` (`motorsport_suit | jersey | top | bottom`) and
+`request.sleeveStyle`. When present it drives render-category resolution instead of
+the setup preset's category, adds an `expose_arms` mask mode for bare-armed
+sleeveless renders, and (via `request.outfitBottomLeatherSuitId`) supports a
+two-piece outfit as one atomic job — two sequential local passes, top before
+bottom, one published result.
+
+**Provider routing**: a garment-typed jersey/top/bottom job on a Segmind
+(`segmind_idm_vton`) setup is now rerouted to FASHN v1.6 on fal — side-by-side
+testing on live submissions showed FASHN preserves garment lettering and the
+wearer's own lower body where IDM-VTON does not. Motorsport suits and
+local/google-edge setups are never rerouted.
+
+**Provider inputs go base64, not ImgBB**: both fal and Segmind now receive inputs
+inline as base64 (fal as a data URI, Segmind raw) instead of fetching from ImgBB
+URLs — a live ImgBB read-timeout degradation had been stalling every render on
+the old path. A transparent-background garment is composited onto white before
+reaching fal only (FASHN flattens alpha to black, previously misread as a long
+sleeve); Segmind's own transparent-garment handling is unchanged.
+
+**Security** (try-on#42): origin-guard middleware (cross-origin requests get 403)
+and the render output path constrained to the project root.
+
+**CI** (2026-08-23): a build gate that byte-compiles every source file and runs a
+secret scan on push/PR to main. `.env.tryon-worker.example` now leads with the
+fleet's `MONGODB_URI`/`MONGODB_DB` names (the worker already accepted both).
+
+**Result storage** (2026-08-26): Vercel Blob is now the required primary result
+store (`BLOB_READ_WRITE_TOKEN`); ImgBB becomes an optional best-effort mirror that
+never fails publication. The source-image download host allowlist was also fixed
+(it was live-broken).
+
+**Bug fix** (2026-08-28): a setup loaded from Mongo (rather than the local JSON
+catalog) lost its `config`, silently defaulting every such job to the MotoGP local
+pipeline regardless of its real processing profile. Fixed, with regression
+coverage.
+
+Version unified to fleet 12.2.0 for this window. See `docs/RUNBOOK.md` for
+operations and `docs/TRYON_ATLAS_CONTRACT.md` for the schema-level detail.
+
 ## Local model research and performance findings - 2026-08
 
 Investigated whether a newer locally-hostable model could replace CatVTON/SD1.5, and

@@ -19,10 +19,28 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import time
 from pathlib import Path
 
 import requests
+
+_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _load_env_file(path: Path) -> None:
+    if not path.exists():
+        return
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+        if value.startswith(("'", '"')) and value.endswith(("'", '"')) and len(value) >= 2:
+            value = value[1:-1]
+        os.environ.setdefault(key, value)
 
 
 def render(api: str, person: Path, garment: Path, out: Path, mask_mode: str) -> dict:
@@ -37,7 +55,12 @@ def render(api: str, person: Path, garment: Path, out: Path, mask_mode: str) -> 
         "show_mask": True,
     }
     started = time.monotonic()
-    response = requests.post(api, json=payload, timeout=1800)
+    response = requests.post(
+        api,
+        json=payload,
+        timeout=1800,
+        headers={"x-tryon-local-secret": os.getenv("TRYON_LOCAL_SECRET", "")},
+    )
     elapsed = time.monotonic() - started
     if response.status_code >= 400:
         raise SystemExit(f"{mask_mode}: API failed {response.status_code}: {response.text[:300]}")
@@ -53,6 +76,9 @@ def main() -> int:
     parser.add_argument("--out-dir", type=Path, default=Path(".runtime/ab_expose_arms"))
     parser.add_argument("--api", default="http://127.0.0.1:7860/api/tryon/run")
     args = parser.parse_args()
+
+    _load_env_file(_ROOT / ".env.tryon-worker")
+    _load_env_file(_ROOT / ".env.local")
 
     if not args.person.is_file():
         raise SystemExit(f"person image not found: {args.person}")

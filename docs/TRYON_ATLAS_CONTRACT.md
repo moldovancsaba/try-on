@@ -1,5 +1,7 @@
 # Try-On Atlas Contract
 
+_Verified @ 8c25ddd (coordinate the camera-side check separately)._
+
 ## Scope
 
 This document defines the stable contract between Camera, MongoDB Atlas, and the local try-on worker.
@@ -62,7 +64,16 @@ Optional request fields:
   jobs and setups that explicitly choose the local or google-edge pipeline are never
   rerouted, and if fal is unconfigured the job falls back through the existing
   fal-fallback path. fal inputs travel inline as base64 data URIs (no ImgBB
-  dependency).
+  dependency). Segmind inputs are also sent as raw base64 (no ImgBB round-trip) —
+  the same 2026-08-19 change that moved fal off ImgBB applied to Segmind too, so
+  neither provider's input path depends on ImgBB; only the RESULT upload does
+  (ImgBB is a mirror there, not the primary — see the worker's `upload_to_blob`).
+  A transparent-background garment is composited onto **white** before being sent to
+  fal/FASHN — FASHN flattens alpha to black, which was previously misread as a
+  long sleeve. This white-compositing is fal-specific: Segmind instead handles a
+  transparent garment through its own existing mechanism (forcing the setup-derived
+  category to `dresses` and adding an alpha-edge prompt instruction), not
+  white-compositing.
 - `request.sleeveStyle` — `sleeveless | short_sleeve | long_sleeve`; snapshot of the
   garment's sleeve style. Only consulted when `garmentType` is present and recognized.
   `short_sleeve` maps onto the local pipeline's `sleeve_length='short_sleeve'`,

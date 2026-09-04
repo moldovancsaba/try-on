@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Worker Control</title>
     <link rel="stylesheet" href="/static/global.css">
+    <meta name="tryon-local-secret" content="{{ local_secret }}">
 </head>
 <body>
     {% include 'navbar.html' %}
@@ -140,6 +141,8 @@
     </main>
 
     <script>
+        const LOCAL_SECRET = document.querySelector('meta[name="tryon-local-secret"]').content;
+
         async function fetchJson(url, options) {
             const response = await fetch(url, options);
             if (!response.ok) {
@@ -307,7 +310,7 @@
                 try {
                     await fetchJson("/api/worker/service-action", {
                         method: "POST",
-                        headers: { "Content-Type": "application/json" },
+                        headers: { "Content-Type": "application/json", "x-tryon-local-secret": LOCAL_SECRET },
                         body: JSON.stringify({ target, action, requestedBy: "local-operator" })
                     });
                     setText("worker-settings-message", `${target} ${action.replace("_", " ")} accepted.`);

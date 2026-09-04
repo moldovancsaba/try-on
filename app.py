@@ -1392,7 +1392,7 @@ def build_ui(mode: str = "generic"):
     return demo
 
 
-from fastapi import FastAPI, HTTPException, Request, File, UploadFile
+from fastapi import Depends, FastAPI, HTTPException, Request, File, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 import uvicorn
@@ -1418,6 +1418,21 @@ async def _origin_guard(request, call_next):
         from fastapi.responses import JSONResponse
         return JSONResponse({"detail": "forbidden origin"}, status_code=403)
     return await call_next(request)
+
+# SECURITY (try-on#42): /api/tryon/run and /api/worker/service-action are
+# reachable by anything that can hit 127.0.0.1 with no other check, and the
+# second one shells out to launchd. Both require this header now. The secret
+# lives only in .env.tryon-worker (gitignored) - never hardcoded, never logged.
+_load_local_env_file(_ROOT / ".env.tryon-worker")
+_load_local_env_file(_ROOT / ".env.local")
+_TRYON_LOCAL_SECRET = os.getenv("TRYON_LOCAL_SECRET", "").strip()
+print(f"[try-on] local API secret {'configured' if _TRYON_LOCAL_SECRET else 'NOT SET (control routes will refuse all requests)'}", flush=True)
+
+
+def _require_local_secret(request: Request) -> None:
+    supplied = request.headers.get("x-tryon-local-secret", "")
+    if not _TRYON_LOCAL_SECRET or supplied != _TRYON_LOCAL_SECRET:
+        raise HTTPException(status_code=401, detail="missing or invalid x-tryon-local-secret")
 
 # Setup static files for the studio
 import os
@@ -1510,7 +1525,11 @@ async def library_page(request: Request):
 
 @fastapi_app.get("/worker-control", response_class=HTMLResponse)
 async def worker_control_page(request: Request):
-    return templates.TemplateResponse(request=request, name="worker_control.html", context={"active": "worker-control"})
+    return templates.TemplateResponse(
+        request=request,
+        name="worker_control.html",
+        context={"active": "worker-control", "local_secret": _TRYON_LOCAL_SECRET},
+    )
 
 @fastapi_app.post("/upload_garment")
 async def upload_garment(file: UploadFile = File(...)):
@@ -1963,7 +1982,7 @@ if "fastapi_app" in globals():
     _replace_fastapi_route("/upload_garment", {"POST"}, _safe_upload_garment)
     _replace_fastapi_route("/save_package", {"POST"}, _safe_save_package)
 
-    @fastapi_app.post("/api/tryon/run")
+    @fastapi_app.post("/api/tryon/run", dependencies=[Depends(_require_local_secret)])
     async def run_tryon_api(payload: TryOnApiRequest):
         from PIL import Image
 
@@ -2217,7 +2236,7 @@ if "fastapi_app" in globals():
         )
         return JSONResponse(normalized)
 
-    @fastapi_app.post("/api/worker/service-action")
+    @fastapi_app.post("/api/worker/service-action", dependencies=[Depends(_require_local_secret)])
     async def worker_service_action_api(payload: ServiceActionRequest):
         runtime_state = load_worker_status(app_root=_ROOT)
         current_job_id = runtime_state.get("currentJobId")
