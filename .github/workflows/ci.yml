@@ -34,6 +34,11 @@ jobs:
       - name: Byte-compile every source file
         run: python -m compileall -q app.py model_paths.py services scripts studio_tools tests
 
+      - name: Audit inventory is current
+        # docs/_audit/*.json must match the tree (fleet contract-first rule, messmass#355).
+        # Fix: python3 scripts/fleet-audit-inventory.py --write, commit the diff.
+        run: python3 scripts/fleet-audit-inventory.py --check
+
       - name: Secret scan
         run: |
           VERSION=8.18.4

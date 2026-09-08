@@ -1,22 +1,25 @@
 {
  "_meta": {
-  "generated": "2026-08-19T23:52:52+00:00",
-  "repo": "try-on",
-  "head": "4ac5c68",
+  "generated": "2026-09-08T05:31:16+00:00",
+  "repo": "tryon-fleet",
+  "head": "28a76c2",
   "counts": {
    "endpoints": 31,
    "collections": 3,
-   "env": 47,
-   "outbound-hosts": 6,
-   "docs": 19
+   "env": 50,
+   "outbound-hosts": 9,
+   "docs": 20
   }
  },
  "items": [
   "api.imgbb.com",
   "api.segmind.com",
+  "cdn.blob",
   "fal.run",
   "github.com",
+  "i.ibb.co",
   "queue.fal.run",
-  "storage.googleapis.com"
+  "storage.googleapis.com",
+  "vercel.com"
  ]
 }

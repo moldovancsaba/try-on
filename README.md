@@ -443,7 +443,6 @@ Supported controls:
 - sampler choice: `Euler A`, `DPM++ 2M`, `UniPC`
 - optional GFPGAN face restoration
 - optional preserved-head literal paste
-- optional deep texture restoration using `warp_repair.py`
 
 Important behavior:
 
@@ -884,7 +883,7 @@ High-value application files:
 - [scripts/sync_models.py](scripts/sync_models.py:1) deterministic core model sync
 - [services/capabilities.py](services/capabilities.py:1) feature capability contract and status report
 - [services/quality_contracts.py](services/quality_contracts.py:1) output quality gates and response metadata contract
-- [warp_repair.py](warp_repair.py:1) texture/logo restoration pass
+- [warp_repair.py](warp_repair.py:1) texture/logo restoration pass — not wired into any render path; covered by `tests/test_texture_repair.py` only
 - [studio_tools/generate_master_map.py](studio_tools/generate_master_map.py:1) DensePose master-map generation
 
 ## Known Limits
@@ -983,6 +982,9 @@ What a comment here is for, when a docstring is required, and how to check the t
 comments that no longer match the code: `docs/CODE_COMMENT_STANDARD.md`. It also lists
 the code paths that are deliberately dead — disabled by hard overrides, kept on purpose,
 and labelled in place.
+
+Cross-app surfaces (shared Atlas collections, the camera completion callback, env vars
+that gate them) follow the fleet contract-first rule: `docs/_audit/contract-first-rule.md`.
 
 ## Local AI Services
 

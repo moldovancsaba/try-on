@@ -18,6 +18,9 @@ Snapshot of where the repo is for the next person picking it up.
 - Security (try-on#42): origin-guard middleware (cross-origin→403) + render output
   path constrained to the project root.
 - Version unified to fleet 12.2.0. See `docs/RUNBOOK.md` for operations.
+- Cross-app changes follow the fleet contract-first rule
+  (`docs/_audit/contract-first-rule.md`); try-on's place in the fleet is summarized in
+  `docs/_audit/tryon-in-the-fleet.md`, its routes in `docs/_audit/api-reference.md`.
 - CI added (2026-08-23): byte-compiles every source file and runs a working-tree
   secret scan on push/PR to main. Deliberately skips installing `requirements.txt`
   (torch/diffusers/mediapipe/ultralytics are gigabytes and still wouldn't exercise
@@ -40,7 +43,11 @@ Snapshot of where the repo is for the next person picking it up.
 - Both launchd services healthy: `com.tryon.app-server` and `com.tryon.camera-worker`.
 - App serves `http://127.0.0.1:7860`; `GET /api/capabilities` reports all core vault
   assets ready.
-- Queue growth is unbounded (retention tracked in try-on#45); reconcile orphans via `scripts/tryon_infra_cli.py reconcile`.
+- Queue retention (try-on#45): `scripts/tryon_infra_cli.py prune-queue` trims
+  `queue/done` + `queue/failed` by age and count; `sweep-processing` reconciles
+  `queue/processing` against Atlas and moves only `done`/`failed` workspaces (leased,
+  stale-lease and record-less dirs are reported, never moved). Both dry-run unless
+  `--apply`; see `docs/RUNBOOK.md`. Atlas-side consistency is still `reconcile`.
 - Test suite green (regression coverage for the Mongo config-passthrough fix added
   2026-08-28). `pytest` is provisioned by `install.sh`.
 - Canary still has not been run; `.runtime/canary_status.json` is empty.
@@ -117,13 +124,19 @@ covered those paths; they had been committed before the rules landed.
 
 Each is labelled in place; none of it runs:
 
-- `warp_repair.py` and the texture-warp branch — `enable_deep_texture` forced off.
-- `_build_hand_preserve_mask` and the hand recomposite block — `preserve_hands` forced off.
+- `warp_repair.py` — no runtime caller since the texture-warp branch in `app.py` was
+  deleted (v12.2.1); kept because `tests/test_texture_repair.py` exercises
+  `texture_repair_decision`. `enable_deep_texture`/`warp_strength` are still accepted
+  on the wire and forced off.
 - `validate_video_output` in `services/quality_contracts.py` — reads contract keys that
   no contract defines, so it raises KeyError on any call. Zero callers.
 
-Decide to revive or delete these; leaving them is fine, leaving them *undocumented* is
-what caused the audit findings.
+Deleted in v12.2.1 rather than kept: `_build_hand_preserve_mask` + the hand recomposite
+block (hands are protected by the vendored masker and the composite step instead) and
+`scripts/recover_fal_fallen_jobs.py` (one-off, zero references).
+
+Decide to revive or delete what remains; leaving it is fine, leaving it *undocumented*
+is what caused the audit findings.
 
 ## Notes for the next session
 

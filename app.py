@@ -431,38 +431,6 @@ def _build_identity_masks(mask_result: dict[str, Any], include_hair: bool = True
     }
 
 
-# DensePose labels: 3 right hand, 4 left hand (vendor DENSE_INDEX_MAP).
-_DENSEPOSE_HAND_LABELS = (3, 4)
-
-
-def _build_hand_preserve_mask(mask_result: dict[str, Any]) -> Image.Image | None:
-    """
-    Build a hand-preservation mask from DensePose labels.
-
-    Intended as a hard guard against diffusion repainting raised-arm hands, but
-    currently unused: the render path forces preserve_hands=False, so nothing calls
-    this with a truthy flag. Re-enable there before relying on it.
-    """
-    if "densepose" not in mask_result:
-        return None
-
-    import numpy as np
-    from PIL import Image, ImageFilter
-
-    densepose = np.array(mask_result["densepose"])
-    if densepose.ndim != 2:
-        return None
-
-    hand_mask_np = np.isin(densepose, _DENSEPOSE_HAND_LABELS).astype(np.uint8) * 255
-    if hand_mask_np.max() == 0:
-        return None
-
-    hand_mask = Image.fromarray(hand_mask_np, mode="L")
-    hand_mask = hand_mask.filter(ImageFilter.MaxFilter(size=3))
-    hand_mask = hand_mask.filter(ImageFilter.MinFilter(size=3))
-    return hand_mask
-
-
 def _build_full_body_edit_mask(
     mask_result: dict[str, Any],
     base_mask: Image.Image,
@@ -716,12 +684,14 @@ def _run_inference_locked(person_img, cloth_img, category, sleeve_length, pant_l
     # - Disable hand source-patching (prevents low-quality hand cutouts).
     # These are hard overrides on every entry path (UI and /api/tryon/run), so the
     # matching UI controls, the TryOnApiRequest fields, and the MotoGP profile's
-    # warp_strength are all inert, and warp_repair.py is unreachable at runtime.
-    # preserve_hands=False likewise makes _build_hand_preserve_mask and the hand
-    # recomposite block dead code; hands stay protected upstream instead (see there).
+    # warp_strength are all inert. The texture-warp branch and the hand-preserve
+    # mask/recomposite these flags once gated have been removed; warp_repair.py
+    # remains only as the subject of tests/test_texture_repair.py. Hands stay
+    # protected upstream: AutoMasker keeps hands/feet out of the edit mask
+    # (hands_protect_area in the vendored cloth_masker) and the composite step
+    # below restores everything outside the garment mask from the source photo.
     enable_deep_texture = False
     warp_strength = 0.0
-    preserve_hands = False
 
     # 💾 Save Last Settings
     try:
@@ -803,7 +773,6 @@ def _run_inference_locked(person_img, cloth_img, category, sleeve_length, pant_l
         sleeve_length = "default"
     mask_result = _MASKER(person, automask_category, sleeve_length=sleeve_length, pant_length=pant_length, expose_arms=(mask_mode == "expose_arms"))
     mask_pil = mask_result["mask"]
-    hand_mask_pil = _build_hand_preserve_mask(mask_result) if preserve_hands else None
 
     # --- Identity Map Extraction ---
     import numpy as np
@@ -988,15 +957,6 @@ def _run_inference_locked(person_img, cloth_img, category, sleeve_length, pant_l
     
     result_img = Image.fromarray(img_np)
     
-    # Restore higher-frequency garment texture details from the source image.
-    # Unreachable: enable_deep_texture is forced False by the fidelity overrides above.
-    # Kept so the pass can be restored by dropping that override; delete this branch and
-    # warp_repair.py together if the feature is abandoned for good.
-    if enable_deep_texture and cloth_img is not None:
-        progress(0.91, desc="Warping Original Textures...")
-        from warp_repair import texture_repair_pass
-        result_img = texture_repair_pass(cloth_img, result_img, mask_pil, warp_strength=warp_strength)
-
     # Preserve original content outside the garment mask so held objects,
     # hands, and background details do not get repainted by diffusion.
     if mask_pil is not None:
@@ -1004,17 +964,6 @@ def _run_inference_locked(person_img, cloth_img, category, sleeve_length, pant_l
         composite_radius = 0.0 if cloth_alpha_mask is not None else 2.0
         result_img = _composite_generated_garment(person, result_img, mask_pil, feather_radius=composite_radius)
 
-    # Unreachable: preserve_hands is forced False above, so hand_mask_pil is always None.
-    # Hands are not unprotected, though — AutoMasker keeps hands/feet out of the edit
-    # mask (hands_protect_area in the vendored cloth_masker), and the composite step
-    # above restores everything outside the garment mask from the source photo.
-    if hand_mask_pil is not None:
-        progress(0.918, desc="Preserving hands...")
-        hand_src = person.resize(result_img.size, Image.LANCZOS) if person.size != result_img.size else person
-        hand_alpha = hand_mask_pil.resize(result_img.size, Image.LANCZOS) if hand_mask_pil.size != result_img.size else hand_mask_pil
-        hand_alpha = hand_alpha.filter(ImageFilter.GaussianBlur(radius=1.0))
-        result_img = Image.composite(hand_src, result_img, hand_alpha)
-    
     # Re-composite the preserved head region from the source person image.
     if preserve_head and head_mask_pil is not None:
         progress(0.92, desc="Recompositing preserved head region...")
@@ -1400,7 +1349,7 @@ import shutil
 import json
 from pydantic import BaseModel, Field
 
-fastapi_app = FastAPI(title="try-on", version="12.2.0")
+fastapi_app = FastAPI(title="try-on", version="12.2.1")
 
 # SECURITY (try-on#42): the server binds 127.0.0.1 but browsers can reach
 # loopback, so a web page the operator visits could POST to this API. Reject

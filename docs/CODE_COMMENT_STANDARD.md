@@ -126,6 +126,24 @@ for f in ("app.py", "scripts/tryon_queue_worker.py"):
 Applies to first-party code: `app.py`, `services/`, `scripts/`, `studio_tools/`,
 `model_paths.py`, `warp_repair.py`, `tests/`.
 
-`vendor/` is upstream CatVTON and is exempt — do not restyle its comments. When our
-code depends on vendored behavior, document it on **our** side, naming the vendored
-symbol, since we cannot rely on an upstream comment staying put.
+`vendor/` is a **modified fork** of upstream CatVTON, not a pristine copy. Upstream
+comments are exempt — do not restyle them. Every local change inside `vendor/` must
+carry a `LOCAL MODIFICATION:` comment block at the change site naming the feature
+and the commit that introduced it, so the next upstream sync can find and re-apply
+it. When first-party code depends on vendored behavior, also document it on **our**
+side, naming the vendored symbol.
+
+Known locally modified files (from `git log -- vendor/`):
+
+- `vendor/CatVTON/model/cloth_masker.py` — `expose_arms` mask mode for sleeveless
+  garments (051bc5c, try-on#38; marked in place as "Local modification"), plus the
+  April 2026 masking changes: DensePose cut constraints (101bc46), grey-shorts /
+  long-pants conflict fix (a7e5e77), bounding-box fallback and leg-mask revert
+  (7177952).
+- `vendor/CatVTON/model/pipeline.py` and `vendor/CatVTON/model/attn_processor.py` —
+  identity mirroring and VAE hot-swap hooks (9a8b4f5).
+- `vendor/CatVTON/model/SCHP/mhp_extension/detectron2/detectron2/checkpoint/detection_checkpoint.py`
+  — checkpoint loading change (9a8b4f5).
+
+Only the `expose_arms` change carries a marker today; the April changes predate this
+rule and are unmarked. Add the block when next touching those sites.

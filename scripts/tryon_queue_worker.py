@@ -68,6 +68,14 @@ SEGMIND_RATIO_WIDTH = 3
 SEGMIND_RATIO_HEIGHT = 4
 SEGMIND_TARGET_RATIO = SEGMIND_RATIO_WIDTH / SEGMIND_RATIO_HEIGHT
 SEGMIND_ALLOWED_CATEGORIES = {"upper_body", "lower_body", "dresses"}
+# Despite the name, this prompt never reaches fal/FASHN. Both use sites below
+# store it as the fal setup's `garment_des` default (the tryon_setups catalog
+# sync, and the resolved setup payload), but _coerce_fal_payload builds the
+# fal request from a fixed key list that has no prompt field, and FASHN v1.6
+# takes none. The only consumer of `garment_des` is _coerce_segmind_payload,
+# so this text is applied when a job with a fal-profile setup renders on
+# Segmind IDM-VTON (the fal->Segmind fallback ladder). Editing it does not
+# change FASHN output.
 FAL_FULL_BODY_PROMPT = (
     "Full-body motorcycle leather suit try-on with the model wearing exactly the provided garment. "
     "Preserve all logos, text, numerals, symbols, edges, seams, fabric textures, color, and placement without distortion. "

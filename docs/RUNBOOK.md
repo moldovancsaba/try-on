@@ -45,6 +45,20 @@ Cross-origin requests are refused (403) by design; loopback/no-Origin callers pa
   scripts/tryon_infra_cli.py prune-queue [--days 30] [--keep 200] [--apply]`.
   Dry-run by default; prunes terminal buckets only (never queue/processing, so
   no leased/in-flight job is touched). Run periodically or wire to a cron.
+- `queue/processing` sweep (try-on#45): `python3 scripts/tryon_infra_cli.py
+  sweep-processing [--grace-minutes 60] [--apply]`. Looks each
+  `queue/processing/<jobId>` up in Atlas and prints a per-dir verdict:
+  `done` -> move to `queue/done`; `failed` -> move to `queue/failed`; an active
+  status (claimed/processing/uploading_result/notifying_camera) with a live
+  lease -> skipped (in flight); an active status whose lease expired more than
+  `--grace-minutes` ago, or `retry_wait` -> reported as stale-lease and left in
+  place (the worker's own `recover_stale_jobs` re-queues those; moving the
+  workspace would strand the requeue); no Atlas record -> reported, never
+  touched. Dry-run by default. Use `--apply` only after a dry-run shows nothing
+  but `MOVE` verdicts you expect, and never while the worker is mid-job on one
+  of the listed dirs (`GET /api/worker/status` -> `currentJobId`). Once moved,
+  the dirs age out through `prune-queue`. Safety proof:
+  `python3 scripts/smoke_sweep_processing.py`.
 
 ## Provider routing (operational)
 Garment-typed jersey/top/bottom jobs on a Segmind setup render on FASHN v1.6

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Operator CLI for queue health, reconciliation, and failure backfill.
+"""Operator CLI for queue health, reconciliation, retention, and failure backfill.
 
 The command-line half of what Worker Control shows: queue depth and provider circuit
 state, the reconciliation audit for jobs whose publish/notify sequence half-applied,
@@ -7,6 +7,10 @@ and a backfill that fills in the failure taxonomy on older failed jobs.
 
 Reconciliation is read-only — it reports findings and marks which are safe to replay,
 it does not replay them. Usage examples: docs/TRYON_CRITICAL_INFRASTRUCTURE.md.
+
+Retention (try-on#45): `prune-queue` trims the terminal done/failed buckets by age
+and count; `sweep-processing` reconciles queue/processing workspaces against Atlas
+job state and moves only the terminal ones. Both are dry-run unless --apply.
 """
 from __future__ import annotations
 
@@ -129,8 +133,8 @@ def cmd_prune_queue(args: argparse.Namespace) -> int:
 
     Filesystem-only and safe: done/failed jobs are already terminal in Atlas, so
     no live/leased job is ever touched (queue/processing is intentionally NOT
-    pruned here - use `reconcile` for orphaned processing dirs). Defaults to
-    --dry-run so nothing is deleted without an explicit --apply.
+    pruned here - `sweep-processing` handles that bucket against Atlas state).
+    Defaults to --dry-run so nothing is deleted without an explicit --apply.
     """
     import shutil
 
@@ -160,6 +164,123 @@ def cmd_prune_queue(args: argparse.Namespace) -> int:
     return 0
 
 
+ACTIVE_JOB_STATUSES = ("claimed", "processing", "uploading_result", "notifying_camera")
+
+SWEEP_SKIP_IN_FLIGHT = "SKIP in-flight"
+SWEEP_REPORT_NO_RECORD = "REPORT no Atlas record"
+SWEEP_REPORT_STALE_LEASE = "REPORT stale-lease"
+SWEEP_MOVE_DONE = "MOVE -> done"
+SWEEP_MOVE_FAILED = "MOVE -> failed"
+
+
+def _parse_iso(value: Any) -> float | None:
+    """ISO-8601 (worker format, `Z` suffix) -> epoch seconds; None if unparseable."""
+    from datetime import datetime, timezone
+
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.timestamp()
+
+
+def sweep_processing_verdict(job: dict[str, Any] | None, *, now_epoch: float, grace_seconds: float) -> str:
+    """Decide what to do with one queue/processing/<jobId> workspace.
+
+    Atlas is the source of truth for job STATE; the directory is only a
+    workspace. The only two verdicts that touch the filesystem are the terminal
+    ones (done -> queue/done, failed -> queue/failed). Everything else is
+    reported and left in place:
+    - no Atlas record: nothing to reconcile against, never touch.
+    - active status with a live lease: a worker owns it.
+    - active status with a lease expired past the grace window, or retry_wait:
+      the worker's own recover_stale_jobs sweep re-queues these; moving the
+      workspace out from under a requeue would lose the inputs.
+    """
+    if not job:
+        return SWEEP_REPORT_NO_RECORD
+    status = str(job.get("status") or "").strip().lower()
+    if status == "done":
+        return SWEEP_MOVE_DONE
+    if status == "failed":
+        return SWEEP_MOVE_FAILED
+    if status == "retry_wait":
+        return SWEEP_REPORT_STALE_LEASE
+    if status in ACTIVE_JOB_STATUSES:
+        lease_epoch = _parse_iso((job.get("processing") or {}).get("leaseExpiresAt"))
+        if lease_epoch is None or lease_epoch + grace_seconds >= now_epoch:
+            return SWEEP_SKIP_IN_FLIGHT
+        return SWEEP_REPORT_STALE_LEASE
+    return SWEEP_SKIP_IN_FLIGHT
+
+
+def sweep_processing(processing_root: Path, jobs: Any, *, apply: bool, grace_minutes: int, now_epoch: float | None = None) -> list[dict[str, Any]]:
+    """Walk queue/processing, decide per dir, move only terminal ones when `apply`.
+
+    `jobs` needs only `find_one({"jobId": ...})`, so the smoke test can pass a
+    dict-backed stub. Returns the verdict rows (also printed as a table).
+    """
+    import shutil
+
+    now_epoch = time.time() if now_epoch is None else now_epoch
+    rows: list[dict[str, Any]] = []
+    if not processing_root.is_dir():
+        return rows
+    for entry in sorted(d for d in processing_root.iterdir() if d.is_dir()):
+        job = jobs.find_one({"jobId": entry.name})
+        verdict = sweep_processing_verdict(job, now_epoch=now_epoch, grace_seconds=grace_minutes * 60)
+        status = str((job or {}).get("status") or "-")
+        lease = str(((job or {}).get("processing") or {}).get("leaseExpiresAt") or "-")
+        action = "reported"
+        if verdict in (SWEEP_MOVE_DONE, SWEEP_MOVE_FAILED):
+            bucket = "done" if verdict == SWEEP_MOVE_DONE else "failed"
+            target = processing_root.parent / bucket / entry.name
+            if apply:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                if target.exists():
+                    action = f"kept (target exists: {bucket}/{entry.name})"
+                else:
+                    shutil.move(str(entry), str(target))
+                    action = f"moved -> {bucket}/{entry.name}"
+            else:
+                action = f"would move -> {bucket}/{entry.name}"
+        elif verdict == SWEEP_SKIP_IN_FLIGHT:
+            action = "skipped"
+        rows.append({"dir": entry.name, "status": status, "leaseExpiresAt": lease, "verdict": verdict, "action": action})
+    return rows
+
+
+def _print_sweep_table(rows: list[dict[str, Any]], *, apply: bool) -> None:
+    cols = ("dir", "status", "leaseExpiresAt", "verdict", "action")
+    widths = {c: max(len(c), *(len(str(r[c])) for r in rows)) if rows else len(c) for c in cols}
+    line = "  ".join(c.ljust(widths[c]) for c in cols)
+    print(line)
+    print("-" * len(line))
+    for r in rows:
+        print("  ".join(str(r[c]).ljust(widths[c]) for c in cols))
+    print(json.dumps({
+        "mode": "apply" if apply else "dry-run",
+        "dirs": len(rows),
+        "verdicts": {v: sum(1 for r in rows if r["verdict"] == v) for v in sorted({r["verdict"] for r in rows})},
+    }, indent=2))
+
+
+def cmd_sweep_processing(args: argparse.Namespace) -> int:
+    """Reconcile queue/processing workspaces against Atlas and move only terminal ones."""
+    client, db = config()
+    try:
+        rows = sweep_processing(QUEUE_ROOT / "processing", db["tryon_jobs"], apply=args.apply, grace_minutes=args.grace_minutes)
+        _print_sweep_table(rows, apply=args.apply)
+        return 0
+    finally:
+        client.close()
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Try-on critical infrastructure CLI")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -175,6 +296,10 @@ def main() -> int:
     prune.add_argument("--keep", type=int, default=200, help="always keep the newest N per bucket (default 200)")
     prune.add_argument("--apply", action="store_true", help="actually delete (default is dry-run)")
     prune.set_defaults(func=cmd_prune_queue)
+    sweep = sub.add_parser("sweep-processing", help="Reconcile queue/processing dirs against Atlas; move done/failed, report the rest")
+    sweep.add_argument("--grace-minutes", type=int, default=60, help="an expired lease is only called stale after this many minutes (default 60)")
+    sweep.add_argument("--apply", action="store_true", help="actually move terminal dirs (default is dry-run)")
+    sweep.set_defaults(func=cmd_sweep_processing)
     args = parser.parse_args()
     return int(args.func(args))
 
