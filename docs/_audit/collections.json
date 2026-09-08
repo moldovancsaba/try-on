@@ -1,8 +1,8 @@
 {
  "_meta": {
-  "generated": "2026-09-08T10:15:02+00:00",
+  "generated": "2026-09-08T10:40:37+00:00",
   "repo": "tryon-fleet",
-  "head": "c8ba623",
+  "head": "f1d79db",
   "counts": {
    "endpoints": 31,
    "collections": 3,
