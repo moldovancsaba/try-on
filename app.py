@@ -1349,7 +1349,7 @@ import shutil
 import json
 from pydantic import BaseModel, Field
 
-fastapi_app = FastAPI(title="try-on", version="12.3.33")
+fastapi_app = FastAPI(title="try-on", version="12.3.34")
 
 # SECURITY (try-on#42): the server binds 127.0.0.1 but browsers can reach
 # loopback, so a web page the operator visits could POST to this API. Reject
