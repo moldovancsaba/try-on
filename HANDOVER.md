@@ -1,10 +1,32 @@
 # Handover — Try-On Studio
 
-_Last updated: 2026-09-03_ (verified @ 8c25ddd)
+_Last updated: 2026-09-28_ (verified @ 1ccd284; fleet version 12.3.37)
 
 Snapshot of where the repo is for the next person picking it up.
 
-## Recent work (2026-08-19 → 09-03)
+## Recent work (2026-09-04 → 09-28)
+- Security (try-on#42, 28a76c2, 2026-09-04): `POST /api/tryon/run` and
+  `POST /api/worker/service-action` require the `x-tryon-local-secret` header, equal to
+  `TRYON_LOCAL_SECRET` from `.env.tryon-worker`. Missing or wrong → 401; if the secret is
+  unset both routes refuse everything. The worker and `scripts/ab_render_expose_arms.py`
+  send it; the Worker Control page receives it server-side.
+- v12.2.1 (899ee12, 2026-09-08): `tryon_infra_cli.py sweep-processing`; dead code removed
+  (hand-preserve mask, texture-warp branch, `scripts/recover_fal_fallen_jobs.py`); full
+  API reference, fleet page, and the inventory gate in CI.
+- v12.2.2 / v12.2.3 (c8ba623, f1d79db): the docs gate (`scripts/fleet-audit-inventory.py
+  --check`) also fails on broken links and checks contract stamps; since 553fa20 an
+  unresolvable stamp or one more than 90 commits behind HEAD fails it.
+- Lockstep version bumps 12.3.28 → 12.3.35 (2026-09-08 → 09-12), version only.
+- 1ccd284 (2026-09-12): `.config/settings.json` moved to Full-Body, 60 steps, mask
+  sharpness 16. Those are exactly the values a `default_motogp` render writes back, so
+  this appears to be leftover render output, not hand tuning. The file only holds the
+  UI's default control values and is rewritten by every render (README, "App settings
+  path"); untracking it is an open owner decision.
+- 12.3.37 (2026-09-28): fleet lockstep release; docs sweep;
+  `scripts/smoke_local_api_fencing.py` now reads the version from `app.py` and checks the
+  401 secret gate instead of hard-coding a version (it had been failing since 12.2.1).
+
+## Earlier work (2026-08-19 → 09-03)
 - Garment types v1: garmentType/sleeveStyle resolution, `expose_arms` mask mode,
   two-pass outfit rendering (top→bottom).
 - Provider routing: garment-typed jersey/top/bottom on a Segmind setup reroute to
@@ -16,8 +38,10 @@ Snapshot of where the repo is for the next person picking it up.
   transparent garments through a separate mechanism (forced `dresses` category +
   alpha-edge prompt), not white-compositing.
 - Security (try-on#42): origin-guard middleware (cross-origin→403) + render output
-  path constrained to the project root.
-- Version unified to fleet 12.2.0. See `docs/RUNBOOK.md` for operations.
+  path constrained to the project root. The shared-secret gate followed on 2026-09-04
+  (above).
+- Version unified to fleet 12.2.0 at the time; lockstep with the fleet since 12.3.28,
+  now 12.3.37. See `docs/RUNBOOK.md` for operations.
 - Cross-app changes follow the fleet contract-first rule
   (`docs/_audit/contract-first-rule.md`); try-on's place in the fleet is summarized in
   `docs/_audit/tryon-in-the-fleet.md`, its routes in `docs/_audit/api-reference.md`.
@@ -40,7 +64,12 @@ Snapshot of where the repo is for the next person picking it up.
 
 ## Runtime status
 
-- Both launchd services healthy: `com.tryon.app-server` and `com.tryon.camera-worker`.
+- Both launchd services running as of 2026-09-28: `com.tryon.app-server` (up since boot,
+  never exited) and `com.tryon.camera-worker` (heartbeat fresh). The worker exited 1 once
+  at the 02:22 boot: Atlas SRV lookup failed with DNS `NoNameservers` because the network
+  was not up yet, and launchd restarted it (`last exit code = 1` in `launchctl print` is
+  that event, not a crash loop). The running app-server still reports 12.3.35 until its
+  next restart.
 - App serves `http://127.0.0.1:7860`; `GET /api/capabilities` reports all core vault
   assets ready.
 - Queue retention (try-on#45): `scripts/tryon_infra_cli.py prune-queue` trims
@@ -50,7 +79,8 @@ Snapshot of where the repo is for the next person picking it up.
   `--apply`; see `docs/RUNBOOK.md`. Atlas-side consistency is still `reconcile`.
 - Test suite green (regression coverage for the Mongo config-passthrough fix added
   2026-08-28). `pytest` is provisioned by `install.sh`.
-- Canary still has not been run; `.runtime/canary_status.json` is empty.
+- Canary still has not been run; `.runtime/canary_status.json` does not exist (checked
+  2026-09-28).
 
 ## Recently landed
 
@@ -68,6 +98,12 @@ Do not spend effort on model replacement. FLUX.2 klein 4B was tested and peaked 
 (12B, non-commercial), so it is not the cheap runtime swap it appears to be. The cheap
 wins are keeping other model servers (Ollama was holding 3.6 GB) unloaded during renders
 and cutting steps from 50-84 to ~28.
+
+The step cut was not applied (as of 2026-09-28): `default_motogp` and
+`.config/settings.json` use 60 steps, and the MotoGP profile enforces at least 50
+(app.py:1075, :1638), so ~28 is below the floor on that route. At ~62 s/step a default
+local render takes about an hour. Open question for the owner: keep that trade-off, or
+lower the preset and the enforced floor.
 
 
 ### Google AI Edge / MediaPipe lane
@@ -145,5 +181,8 @@ is what caused the audit findings.
 - ~100 definitions still meet a docstring trigger, mostly in `app.py`'s UI layer and
   the worker's provider plumbing. `docs/CODE_COMMENT_STANDARD.md` has the script that
   ranks them.
-- `studio_tools/templates/worker_control.html` has 372 lines of JavaScript and no
-  comments, against a well-commented `index.html` next door.
+- `studio_tools/templates/worker_control.html` has 229 lines of JavaScript (one inline
+  `<script>` block, lines 144-372 of the 375-line file) and no comments, against a
+  well-commented `index.html` next door.
+- Decide the render step count (see "Local model research" above) and whether
+  `.config/settings.json` stays tracked; both are owner calls.

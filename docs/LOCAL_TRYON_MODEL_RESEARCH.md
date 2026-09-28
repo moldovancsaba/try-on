@@ -96,6 +96,11 @@ Keep the architecture. Change the operating conditions.
    the single largest and cheapest win.
 2. **Cut steps from 50-84 to ~28.** SD1.5 quality plateaus well before 50; the current
    settings pay 2-3x render time for little. Re-tune on one garment before rolling out.
+   _Status 2026-09-28: not adopted. The default setup `default_motogp` and
+   `.config/settings.json` use 60 steps, and the `motogp_leather_magic` profile enforces
+   at least 50 (app.py:1075, :1638), so ~28 is below the floor on that route; at ~62
+   s/step a default render is about an hour. Whether to lower the preset and the floor is
+   an open owner question._
 3. **Keep one job at a time.** Already enforced by `SingleTaskLock`, and the 92-minute
    contended render is the evidence for why that constraint is correct.
 4. **Keep the online providers for quality peaks.** fal and Segmind already exist in the

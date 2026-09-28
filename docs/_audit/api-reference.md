@@ -119,13 +119,13 @@ Routes with a code caller (13):
 | `GET /`, `/set-garment`, `/garments`, `/worker-control` | `studio_tools/templates/navbar.html:8-10`, `landing.html:29-39`, `library.html:31` |
 | `POST /upload_garment` | `studio_tools/templates/index.html:140` |
 | `POST /save_package` | `studio_tools/templates/index.html:305` |
-| `POST /api/tryon/run` | `scripts/tryon_queue_worker.py:315` (`TRYON_LOCAL_API_URL` default), `scripts/ab_render_expose_arms.py:77` |
+| `POST /api/tryon/run` | `scripts/tryon_queue_worker.py:323` (`TRYON_LOCAL_API_URL` default), `scripts/ab_render_expose_arms.py:77` |
 | `POST /api/tryon/jobs/{job_id}/retry` | `studio_tools/templates/worker_control.html:360` |
 | `GET /api/worker/status` | `studio_tools/templates/worker_control.html:296` |
 | `POST /api/worker/settings` | `studio_tools/templates/worker_control.html:334` |
 | `POST /api/worker/service-action` | `studio_tools/templates/worker_control.html:311` |
-| `GET /api/capabilities` | `scripts/service_healthcheck.py:23`, `scripts/tryon_queue_worker.py:2436-2455`, `scripts/verify_tryon_worker_setup.py:140` |
-| `POST /api/local-ai/google-edge/tryon` | `scripts/tryon_queue_worker.py:1795,1799`; `tests/test_worker_google_edge.py:78` |
+| `GET /api/capabilities` | `scripts/service_healthcheck.py:23`, `scripts/tryon_queue_worker.py:2444-2463`, `scripts/verify_tryon_worker_setup.py:140` |
+| `POST /api/local-ai/google-edge/tryon` | `scripts/tryon_queue_worker.py:1803,1807`; `tests/test_worker_google_edge.py:78` |
 
 **Zero-caller routes (18) — deprecation candidates.** Nothing is deleted here; each needs an
 owner decision.

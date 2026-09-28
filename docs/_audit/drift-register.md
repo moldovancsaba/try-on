@@ -46,8 +46,9 @@ change as any route/collection/env/doc change.
   local/google-edge render branches. A Segmind or fal job is claimed and
   dispatched with no readiness check; a job claimed mid-model-load burns an
   attempt and lands in retry.
-- **README.md:521-534** example uses `"processing_profile":"local_profile"` —
-  not a valid profile; `normalize_processing_profile`
+- ~~**README.md:521-534** example uses `"processing_profile":"local_profile"`~~
+  RESOLVED v12.3.37 (the API example uses `generic`, the catalog and preset examples use
+  `motogp_leather_magic`, and the valid names are listed). Original: not a valid profile; `normalize_processing_profile`
   (services/worker_contracts.py:70-86) silently returns `generic`, so a copy of
   this example does NOT get the MotoGP tuning a reader expects.
 - ~~**call_segmind_tryon_api docstring contradicts its own body 3 lines away**~~
@@ -62,7 +63,8 @@ change as any route/collection/env/doc change.
   (docstring now states the resetAttempts zeroing). Original: "Attempt count is left
   alone." Code zeroes `processing.attemptCount` when `resetAttempts` is true
   (:2299-2300); README:833 documents the reset correctly.
-- **HANDOVER.md:100-102** "~100 definitions still meet a docstring trigger";
+- **HANDOVER.md:181** ("Notes for the next session"; was :100-102) "~100 definitions
+  still meet a docstring trigger";
   running the standard's own script gives 313 triggered / 255 undocumented
   (254/196 excluding tests) — ~2× the stated backlog.
 - **docs/TRYON_WORKER_FAILURE_CONTRACT_PLAN.md** specifies a final-failure
@@ -90,17 +92,23 @@ change as any route/collection/env/doc change.
   inputs, and the local-only `/api/tryon/run` call are in the flow now). Original:
   still describes a single local-render pipeline; Segmind/fal/google-edge never call `/api/tryon/run`. FASHN reroute
   and base64 inputs absent (grep "FASHN" over README = 1 hit, the ImgBB line).
-- **README.md:503-514** `/api/tryon/run` optional-field list omits `mask_mode`,
-  `category_source`, `sleeve_length`, `pant_length` — the fields driving this
+- ~~**README.md:503-514** `/api/tryon/run` optional-field list omits `mask_mode`,
+  `category_source`, `sleeve_length`, `pant_length`~~ RESOLVED v12.3.37 (fields and the
+  `x-tryon-local-secret` header documented). Original: the fields driving this
   week's behavior.
-- **docs/TRYON_ATLAS_CONTRACT.md** (the cross-app contract, otherwise CURRENT):
-  its only base64 statement is scoped to fal — Segmind's move to base64
+- ~~**docs/TRYON_ATLAS_CONTRACT.md** (the cross-app contract, otherwise CURRENT):
+  its only base64 statement is scoped to fal~~ RESOLVED 28a76c2 (Segmind raw base64 and
+  the fal-only white-compositing are in docs/TRYON_ATLAS_CONTRACT.md:66-76). Original:
+  Segmind's move to base64
   (e2c92c6, 38 min after the doc commit) and white-compositing of transparent
   garments (876045a) are undocumented; a camera-side reader would still believe
   Segmind fetches from ImgBB.
-- **docs/RELEASE_NOTES.md** — no entry for any of the nine 2026-08-19 commits.
-- **.env.tryon-worker.example:20** `SEGMIND_API_TIMEOUT_SECONDS=180` vs code
-  default 120 (:317) — commit 0b479c0 changed the example, not the code.
+- ~~**docs/RELEASE_NOTES.md** — no entry for any of the nine 2026-08-19 commits.~~
+  RESOLVED 28a76c2 (the "Garment types, provider routing, and result storage" entry).
+- ~~**.env.tryon-worker.example:20** `SEGMIND_API_TIMEOUT_SECONDS=180` vs code
+  default 120~~ RESOLVED v12.3.37 (the example now notes the code default,
+  scripts/tryon_queue_worker.py:332, and keeps 180 as the operating value). Original:
+  (:317) — commit 0b479c0 changed the example, not the code.
 
 ## 3. CURRENT (verified — the good news)
 - **docs/TRYON_ATLAS_CONTRACT.md is the most accurate doc in the fleet**: every
@@ -137,12 +145,14 @@ change as any route/collection/env/doc change.
   RESOLVED v12.2.1 (deleted; no RUNBOOK or launchd reference existed).
 - ~~`outputs/` (2.8 MB, zero code references, not gitignored — untracked debris
   reappears in git status).~~ RESOLVED 64d3f8e (removed and gitignored).
-- The three 2026-08-19 smoke scripts (smoke_expose_arms_mask,
-  smoke_garment_type_resolution, smoke_outfit_orchestration) are the ONLY
-  verification for this week's features (tests/ covers none) yet are referenced
-  nowhere — document them in README ops or move to tests/ before they rot.
-- app.py:1498/:1506 original `/upload_garment` + `/save_package` handlers are
-  replaced at runtime (:1941-1942) by path-sanitizing versions; the originals
+- ~~The three 2026-08-19 smoke scripts (smoke_expose_arms_mask,
+  smoke_garment_type_resolution, smoke_outfit_orchestration) are referenced
+  nowhere~~ RESOLVED v12.3.37 (docs/RUNBOOK.md "Smoke scripts" indexes all six
+  `scripts/smoke_*.py`). Original: they are the ONLY verification for this week's
+  features (tests/ covers none) — document them in README ops or move to tests/
+  before they rot.
+- app.py:1483/:1491 original `/upload_garment` + `/save_package` handlers are
+  replaced at runtime (:1931-1932) by path-sanitizing versions; the originals
   are unreachable but read as live path-traversal bugs 400 lines up.
 
 ## 6. Comment health

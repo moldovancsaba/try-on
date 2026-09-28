@@ -38,6 +38,9 @@ Every cross-app interaction goes through Atlas or an outbound call from the work
   `TRYON_LOCAL_SECRET` (gates `/api/tryon/run` and `/api/worker/service-action`). The
   worker also honours per-provider daily limits and circuit-breaker thresholds.
 - **SSO**: none. try-on has no user accounts; the operator UI is loopback-only.
+- **savetheworld**: the fleet is five apps (messmass, camera, fanmass, try-on,
+  savetheworld); try-on has no link to savetheworld in either direction and only shares
+  its lockstep version.
 - **Loopback posture**: the app is never exposed; the worker is single-instance (a second
   worker exits). Operators reach the UI at `http://127.0.0.1:7860/worker-control`.
 

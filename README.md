@@ -42,19 +42,28 @@ The current API surface is:
 - `POST /api/local-ai/product-photo/cleanup`
 - `POST /api/local-ai/quality/brand-safety`
 - `POST /api/local-ai/quality/tryon-gate`
+- `POST /api/local-ai/google-edge/analyze`
+- `POST /api/local-ai/google-edge/tryon`
 - `POST /api/local-ai/editing/inpaint`
 - `POST /api/local-ai/variants/generate`
 - `POST /api/local-ai/events/{eventId}/social-stills`
 - `GET /api/local-ai/reports`
+- `GET /api/local-ai/reports/export`
 - the worker status endpoint
 - `GET /api/worker/settings`
 - the worker settings endpoint
 - the worker service-action endpoint
 - the worker job retry endpoint
+- `POST /api/tryon/jobs/{job_id}/retry` (alias of the worker job retry endpoint)
 - the setup listing endpoint
 - the setup selection endpoint
 - `POST /upload_garment`
 - `POST /save_package`
+
+The complete list (31 routes) with auth, request/response shapes, side effects and caller
+evidence is `docs/_audit/api-reference.md`. `POST /api/tryon/run` and the worker
+service-action endpoint require the `x-tryon-local-secret` header (see `TRYON_LOCAL_SECRET`
+below); every route is loopback-only and origin-guarded.
 
 The local queue worker surface is:
 
@@ -89,6 +98,19 @@ Shared model root:
 App settings path:
 
 - `.config/settings.json`
+
+What this file is: the default control values the `/try-on` and `/motogp-leather-magic`
+pages load when they are built (`load_settings`, app.py:1018). It is not a render preset
+for queue jobs: every render, from the UI or through `POST /api/tryon/run`, overwrites it
+with the parameters that render actually used (`save_app_settings`, app.py:697-707, reached
+from `_run_tryon_api_job` at app.py:1778/1834), and that includes every local worker job.
+Worker jobs take their parameters from the setup (`.config/tryon_setups.json` or the Atlas
+`tryon_setups` document), never from this file. Because the file is tracked in git, a
+local render can leave the working tree dirty. The values committed in 1ccd284 (Full-Body,
+60 steps, guidance 4.6, mask sharpness 16, padding 10, DPM++ 2M) are exactly what a
+`default_motogp` render of an opaque garment writes back, so they appear to be leftover
+render output rather than hand tuning. Whether to untrack the file is an open owner
+decision.
 
 Legacy model-vault settings files are migrated forward automatically on startup.
 
@@ -196,13 +218,22 @@ URI and db name, the Camera completion URL and secret, and `BLOB_READ_WRITE_TOKE
 (required since Vercel Blob became the primary result store). `IMGBB_API_KEY` is
 optional — absent, it just disables the best-effort result mirror.
 
+Mongo uses the fleet-standard names `MONGODB_URI` / `MONGODB_DB`; the legacy
+`MONGODB_ATLAS_URI` / `MONGODB_DB_NAME` spellings are still accepted (and win if both are
+set). `TRYON_LOCAL_SECRET` does not stop the worker from starting, but it is required in
+practice: the app-server checks it on the `x-tryon-local-secret` header of
+`POST /api/tryon/run` and the worker service-action endpoint, so without it every local
+render the worker requests gets 401 (try-on#42). Both the app-server and the worker read it
+from `.env.tryon-worker`.
+
 ```bash
-MONGODB_ATLAS_URI=...
-MONGODB_DB_NAME=...
+MONGODB_URI=...
+MONGODB_DB=...
 BLOB_READ_WRITE_TOKEN=...
 IMGBB_API_KEY=...
 CAMERA_TRYON_COMPLETE_URL=...
 CAMERA_TRYON_INTERNAL_SECRET=...
+TRYON_LOCAL_SECRET=...
 TRYON_SETUP_COLLECTION=tryon_setups
 TRYON_CAMERA_SETUP_PREFERENCE_COLLECTION=camera_setup_preferences
 TRYON_SETUP_CATALOG_PATH=.config/tryon_setups.json
@@ -273,41 +304,60 @@ Operator control notes:
 
 Setup metadata in Atlas + local catalog:
 
-1. `tryon_setups` collection documents now store setup metadata only (not full tuning payload).
+1. `tryon_setups` collection documents always carry selection metadata. For a setup that
+   lives in the local catalog, the worker's startup sync (`_sync_local_setups_to_mongo`)
+   and `GET /api/tryon/setups` upsert metadata only (the worker's sync also writes the fal
+   setup's `config`).
+   A document can also carry a full `config` of its own (e.g. written by Camera's admin
+   UI); the worker uses that `config` whenever the setup is not in the local catalog
+   (see step 4 of the setup selection flow above and "How to update MongoDB Atlas presets"
+   below). Metadata as synced for the default setup:
 
 ```json
 {
-  "setupId": "default_setup",
-  "name": "Default Local",
-  "description": "Default high-detail leather route",
+  "setupId": "default_motogp",
+  "name": "MotoGP High (Default)",
+  "description": "Default high-quality leather route.",
   "cameraId": null,
   "active": true,
   "isDefault": true,
-  "rank": 0,
-  "revision": "local-high-v1",
+  "rank": 10,
+  "revision": "motogp-high-v3",
+  "provider": "local",
   "createdAt": "2026-06-03T12:00:00Z",
   "updatedAt": "2026-06-03T12:00:00Z"
 }
 ```
 
-2. `.config/tryon_setups.json` now holds the full payload (`config`) used by local worker run:
+2. `.config/tryon_setups.json` holds the full payload (`config`) for the setups checked in
+   to this repo (excerpt of the default entry):
 
 ```json
 {
-  "setupId": "default_setup",
-  "name": "Local High (Default)",
+  "setupId": "default_motogp",
+  "provider": "local",
+  "name": "MotoGP High (Default)",
   "active": true,
-  "revision": "local-high-v1",
+  "isDefault": true,
+  "revision": "motogp-high-v3",
   "config": {
-    "processing_profile": "local_profile",
+    "processing_profile": "motogp_leather_magic",
     "category": "Upper (T-Shirts, Hoodies)",
     "steps": 60,
-    "guidance": 4.6
+    "guidance": 4.6,
+    "mask_sharpness": 16,
+    "mask_padding": 4
   }
 }
 ```
 
-2. `camera_setup_preferences` stores last selected setup per camera.
+   `processing_profile` must be a known name (`generic`, `motogp_leather_magic`,
+   `segmind_idm_vton`, `fal_tryon`, `google_edge_tryon`, or a spelling variant of one);
+   `normalize_processing_profile` (services/worker_contracts.py) silently maps anything
+   else to `generic`. The MotoGP profile forces Full-Body unless the job's garment type
+   set the category, and raises the knobs to its floors (see "MotoGP Leather Magic").
+
+3. `camera_setup_preferences` stores last selected setup per camera.
 
 ```json
 {
@@ -317,7 +367,7 @@ Setup metadata in Atlas + local catalog:
 }
 ```
 
-3. Camera job should only pass lean payload:
+4. Camera job should only pass lean payload:
 
 ```json
 {
@@ -336,7 +386,7 @@ Setup metadata in Atlas + local catalog:
 }
 ```
 
-4. If a specific image must force a setup, add `request.setupId`.
+5. If a specific image must force a setup, add `request.setupId`.
 
 ```json
 {
@@ -461,16 +511,23 @@ This mode is tuned for a narrower input contract:
 - front-facing full-body leather suit image
 - full-body suit category locked on the page
 
-Runtime defaults are more aggressive than the generic try-on page:
+Runtime defaults are more aggressive than the generic try-on page. The page wrapper
+(app.py:1070-1088) and the API's `motogp_leather_magic` processing profile
+(`_apply_processing_profile`, app.py:1623-1655) enforce the same floors:
 
-- `Full-Body (Suits, Dresses, Rompers)` locked
+- `Full-Body (Suits, Dresses, Rompers)` locked (the API profile keeps a garment-type
+  category the worker resolved, try-on#37)
 - `High Quality` only
-- at least `30` steps
-- guidance at least `4.2`
+- at least `50` steps
+- guidance at least `4.6`
+- mask sharpness at least `12`, mask padding at least `10`
+- detail boost clamped to `0`-`0.25`
+- API profile only: a transparent (alpha) garment gets mask padding capped at `4` and
+  mask sharpness raised to at least `16` (app.py:1642-1645)
 - `DPM++ 2M` sampler
 - preserved head enabled
 - high-fidelity VAE enabled
-- deep texture warp disabled by default
+- deep texture warp off (forced off on every render path)
 
 ### Garment Studio
 
@@ -505,16 +562,26 @@ Linux support boundaries and smoke validation are documented in `docs/LINUX_SUPP
 
 Runs the try-on pipeline and saves the output to a path you provide.
 
+Required header: `x-tryon-local-secret: <TRYON_LOCAL_SECRET>` (app.py:1381-1384). A missing
+or wrong value gets `401`, and so does every request while `TRYON_LOCAL_SECRET` is unset.
+The queue worker and `scripts/ab_render_expose_arms.py` send it for you.
+
 Required fields:
 
 - `person_image_path`
-- `garment_image_path`
-- `output_image_path`
+- `garment_image_path` (or `garment_package_name`)
+- `output_image_path` (must resolve inside this repo, otherwise `400`)
 
 Optional high-value fields:
 
-- `processing_profile`
+- `processing_profile` (`generic` by default; see the profile names under the setup catalog
+  above; an unknown name is silently treated as `generic`)
 - `category`
+- `category_source` (`setup` by default; the worker sends `garment_type` when the garment's
+  own type chose the category, which stops the MotoGP profile from forcing Full-Body)
+- `mask_mode` (`default` or `expose_arms`; `expose_arms` is Upper-category only, `400`
+  otherwise)
+- `sleeve_length`, `pant_length` (`default` unless set)
 - `steps`
 - `guidance`
 - `preserve_head`
@@ -527,7 +594,7 @@ Example:
   "person_image_path": "/abs/path/person.png",
   "garment_image_path": "/abs/path/garment.png",
   "output_image_path": "/abs/path/result.png",
-  "processing_profile": "local_profile",
+  "processing_profile": "generic",
   "category": "Upper (T-Shirts, Hoodies)",
   "steps": 24,
   "guidance": 3.5,
@@ -544,7 +611,7 @@ Response:
   "status": "succeeded",
   "output_image_path": "/abs/path/result.png",
   "message": "ok",
-  "processing_profile": "local_profile",
+  "processing_profile": "generic",
   "quality_validation": {},
   "metadata_path": "/abs/path/result.png.json"
 }
@@ -691,7 +758,7 @@ Preset shape reference:
   "rank": 30,
   "revision": "example-v2",
   "config": {
-    "processing_profile": "local_profile",
+    "processing_profile": "motogp_leather_magic",
     "steps": 72,
     "guidance": 4.8,
     "mask_sharpness": 18,
@@ -893,7 +960,14 @@ High-value application files:
 - **Throughput is memory-bound on a 16 GB machine.** A 768x1024 / 50-step render measured
   ~52 minutes with the machine idle, and 92 minutes with a second image model resident,
   against the ~2-2.5 s/step the silicon is capable of. The gap is paging, not compute.
-  Keep other model servers unloaded while rendering, and prefer ~28 steps.
+  Keep other model servers unloaded while rendering.
+- **Step count: ~28 was recommended, 60 is what runs.** The 2026-08 research suggested
+  cutting steps to ~28. That was not adopted: the default setup `default_motogp` and
+  `.config/settings.json` both use 60 steps, and the `motogp_leather_magic` profile
+  enforces at least 50 (app.py:1075 on the MotoGP page, :1638 on the API), so ~28 is below
+  the floor on that route. At the measured ~62 s/step a default local render takes about
+  an hour. Open question for the owner: keep that quality/speed trade-off, or lower the
+  preset and the enforced floor.
 - No larger try-on model is viable here: FLUX.2 klein 4B measured a 17.94 GB peak on a
   16 GB machine. See `docs/LOCAL_TRYON_MODEL_RESEARCH.md` for the survey and numbers.
 

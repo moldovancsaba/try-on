@@ -1,17 +1,21 @@
 {
  "_meta": {
-  "generated": "2026-09-12T14:54:23+00:00",
-  "repo": "tryon-fleet",
-  "head": "e8d4672",
+  "generated": "2026-09-28T09:23:01+00:00",
+  "repo": "try-on",
+  "head": "1ccd284",
   "counts": {
    "endpoints": 31,
    "collections": 3,
    "env": 50,
    "outbound-hosts": 9,
-   "docs": 20
+   "docs": 21
   }
  },
  "items": [
+  {
+   "file": "AGENTS.md",
+   "title": "AGENTS"
+  },
   {
    "file": "DEVELOPMENT_MANTRA.md",
    "title": "Try-On Studio Development Mantra"
