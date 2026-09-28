@@ -1,6 +1,6 @@
 # try-on operations runbook
 
-Operational reference for the two local launchd services. Fleet version 12.3.37.
+Operational reference for the two local launchd services. Fleet version 12.3.39.
 Companion to `HANDOVER.md` (state) and `docs/TRYON_ATLAS_CONTRACT.md` (contract).
 
 ## Services (launchd, user domain)

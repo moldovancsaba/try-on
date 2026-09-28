@@ -1,6 +1,6 @@
 # Handover — Try-On Studio
 
-_Last updated: 2026-09-28_ (verified @ 1ccd284; fleet version 12.3.37)
+_Last updated: 2026-09-28_ (verified @ 1ccd284; fleet version 12.3.39)
 
 Snapshot of where the repo is for the next person picking it up.
 

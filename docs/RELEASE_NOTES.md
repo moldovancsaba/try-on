@@ -1,5 +1,9 @@
 # Release Notes
 
+## 12.3.39 — 2026-09-28
+
+- Version only. Fleet release 12.3.39: messmass fixes event-editor saves (an editor with no password could open but never save; editors that cannot save are now read-only) and camera ships access, secret-comparison and try-on backstop hardening. 12.3.39 was a camera-only security release; nothing changed in this repo.
+
 ## 12.3.37 — 2026-09-28
 
 Fleet lockstep release (messmass, camera, fanmass, try-on, savetheworld). try-on had no
