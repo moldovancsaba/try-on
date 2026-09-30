@@ -1,5 +1,9 @@
 # Release Notes
 
+## 12.3.40 — 2026-09-30
+
+- Version only. Fleet release 12.3.40: camera removed its try-on sync cron while try-on is paused; messmass, fanmass, try-on and savetheworld carry the new number. Nothing changed in this repo.
+
 ## 12.3.39 — 2026-09-28
 
 - Version only. Fleet release 12.3.39: messmass fixes event-editor saves (an editor with no password could open but never save; editors that cannot save are now read-only) and camera ships access, secret-comparison and try-on backstop hardening. 12.3.39 was a camera-only security release; nothing changed in this repo.
