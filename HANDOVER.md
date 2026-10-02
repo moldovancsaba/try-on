@@ -1,8 +1,37 @@
 # Handover — Try-On Studio
 
-_Last updated: 2026-09-28_ (verified @ 1ccd284; fleet version 12.3.40)
+_Last updated: 2026-10-02_ (verified @ 1ccd284; fleet version 12.3.40)
 
 Snapshot of where the repo is for the next person picking it up.
+
+## Status 2026-10-02 — paused on purpose
+
+The owner paused try-on on 2026-09-29. The launchd agents `com.tryon.app-server`
+(`127.0.0.1:7860`) and `com.tryon.camera-worker` are booted out and disabled, so
+nothing claims jobs. camera has `tryOn.enabled` switched off on every event
+(2026-09-30), its */5 sync cron was removed in camera 12.3.40, and the newest
+`tryon_jobs` row is from 2026-09-11, so there is no backlog. A closed port 7860
+is expected, not an outage.
+
+**Restart, only when the owner asks:**
+```bash
+launchctl enable gui/$(id -u)/com.tryon.app-server
+launchctl enable gui/$(id -u)/com.tryon.camera-worker
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.tryon.app-server.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.tryon.camera-worker.plist
+```
+The app-server takes about 2.5 minutes to load its models before `:7860` answers
+(`curl -s http://127.0.0.1:7860/api/capabilities`). Also switch try-on back on
+per event in camera, and restore camera's sync cron (camera `RUNBOOK.md`,
+"Scheduled jobs and workers").
+
+**Direction.** The owner is building a separate renderer app, image.direct, meant
+to replace this worker: camera's callback for it exists but is disabled, and
+dispatch is not built (camera `docs/IMAGE_DIRECT_INTEGRATION.md`, camera issues
+#162 to #166). This repo is the legacy path until that is retired. A design for a
+camera-hosted gateway for third-party renderers was drafted
+(`docs/TRYON_ATLAS_CONTRACT.md` PROPOSED section on the local branch
+`feature/tryon-partner-gateway`, not pushed) and is not being built.
 
 ## Recent work (2026-09-04 → 09-28)
 - Security (try-on#42, 28a76c2, 2026-09-04): `POST /api/tryon/run` and
