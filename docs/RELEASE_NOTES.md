@@ -1,5 +1,9 @@
 # Release Notes
 
+## 12.3.41 — 2026-10-10
+
+- Version only. Fleet release 12.3.41: camera ships marking the people in each photo at vetting (on for every event and required), the camera mode setting for partners and events, hiding a picture that cannot be shown everywhere, the order of the journey pages and sample selfies (see its RELEASE_NOTES); messmass ships the matching guides; savetheworld has carried 12.3.41 since 2026-10-05. Nothing changed in this repo.
+
 ## 12.3.40 — 2026-09-30
 
 - Version only. Fleet release 12.3.40: camera removed its try-on sync cron while try-on is paused; messmass, fanmass, try-on and savetheworld carry the new number. Nothing changed in this repo.
