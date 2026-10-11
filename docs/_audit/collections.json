@@ -1,15 +1,7 @@
 {
  "_meta": {
-  "generated": "2026-10-10T16:57:55+00:00",
   "repo": "try-on",
-  "head": "ea3100e",
-  "counts": {
-   "endpoints": 31,
-   "collections": 3,
-   "env": 50,
-   "outbound-hosts": 9,
-   "docs": 22
-  }
+  "regenerate": "python3 scripts/fleet-audit-inventory.py --write"
  },
  "items": [
   "leather_suits",
