@@ -1,5 +1,9 @@
 # Release Notes
 
+## 12.3.42 — 2026-10-11
+
+- Version only. Fleet release 12.3.42 (2026-10-11): camera ships the journey analytics and the stop of storing IP addresses with photos, a shown/required setting for every checkbox, the public-gallery permission as a setting, the four-way camera mode, the removal of the try-on integration from the app (documented in camera docs/TRYON_REMOVED.md; the try-on repo itself is unchanged), a documentation and deprecation clean-up, the pull-request playbook and tooling; messmass the matching guides and clean-up. No behaviour change in this repo.
+
 ## 12.3.41 — 2026-10-10
 
 - Version only. Fleet release 12.3.41: camera ships marking the people in each photo at vetting (on for every event and required), the camera mode setting for partners and events, hiding a picture that cannot be shown everywhere, the order of the journey pages and sample selfies (see its RELEASE_NOTES); messmass ships the matching guides; savetheworld has carried 12.3.41 since 2026-10-05. Nothing changed in this repo.
