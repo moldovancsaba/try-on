@@ -1083,3 +1083,5 @@ Services:
 - `local_ai_service_reporting`
 
 All first-version service execution is local. Do not add paid external inference/API dependencies to this lane without updating the architecture docs, README, release notes, privacy/security notes, and GitHub issue acceptance criteria.
+
+[Project board review and manual movement journal](docs/PROJECT_BOARD_MOVEMENT_LOG.md).
